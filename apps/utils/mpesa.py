@@ -13,7 +13,10 @@ class MpesaHandler:
         self.consumer_secret = get_setting("MPESA_CONSUMER_SECRET", getattr(settings, "MPESA_CONSUMER_SECRET", ""))
         self.shortcode = get_setting("MPESA_SHORTCODE", getattr(settings, "MPESA_SHORTCODE", ""))
         self.passkey = get_setting("MPESA_PASSKEY", getattr(settings, "MPESA_PASSKEY", ""))
-        self.b2c_shortcode = get_setting("MPESA_B2C_SHORTCODE", getattr(settings, "MPESA_B2C_SHORTCODE", ""))
+        self.b2c_shortcode = get_setting(
+            "mpesa_b2c_shortcode", 
+            os.getenv('MPESA_B2C_SHORTCODE', '600996')
+        )
         self.initiator_name = get_setting("MPESA_INITIATOR_NAME", getattr(settings, "MPESA_INITIATOR_NAME", "testapi"))
         self.initiator_password = get_setting(
             "MPESA_INITIATOR_PASSWORD", getattr(settings, "MPESA_INITIATOR_PASSWORD", "Safaricom007*")
