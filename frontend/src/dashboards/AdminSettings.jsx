@@ -39,7 +39,7 @@ const CredentialField = ({ fieldKey, label, placeholder, sensitive, currentValue
   const [showInput, setShowInput] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const isConfigured = !!currentValue && currentValue !== '••••••••';
+  const isConfigured = !!currentValue && currentValue !== '••••••••' && currentValue !== 'null' && currentValue !== '';
 
   const handleSave = async () => {
     if (!inputValue.trim()) { toast.error('Value cannot be empty'); return; }
@@ -589,18 +589,21 @@ const AdminSettings = ({ defaultTab = 'mpesa' }) => {
                   { key: 'mpesa_passkey',         label: 'Passkey',              placeholder: 'From Daraja portal',           sensitive: true  },
                   { key: 'mpesa_b2c_initiator',   label: 'B2C Initiator Name',   placeholder: 'Sandbox: testapi',             sensitive: false },
                   { key: 'mpesa_b2c_credential',  label: 'B2C Security Credential', placeholder: 'From Daraja portal',        sensitive: true  },
-                ].map(field => (
-                  <CredentialField
-                    key={field.key}
-                    fieldKey={field.key}
-                    label={field.label}
-                    placeholder={field.placeholder}
-                    sensitive={field.sensitive}
-                    currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
-                    onSave={(val) => handleUpdate(field.key, val, 'mpesa')}
-                    onReveal={() => handleReveal(field.key)}
-                  />
-                ))}
+                ].map(field => {
+                  const setting = secureSettings.find(s => s.key === field.key);
+                  return (
+                    <CredentialField
+                      key={field.key}
+                      fieldKey={field.key}
+                      label={field.label}
+                      placeholder={field.placeholder}
+                      sensitive={field.sensitive}
+                      currentValue={setting?.encrypted_value || setting?.value || ''}
+                      onSave={(val) => handleUpdate(field.key, val, 'mpesa')}
+                      onReveal={() => handleReveal(field.key)}
+                    />
+                  );
+                })}
 
                 {/* Callback URL — full width */}
                 <div className="md:col-span-2">
@@ -609,7 +612,7 @@ const AdminSettings = ({ defaultTab = 'mpesa' }) => {
                     label="Callback URL"
                     placeholder="https://your-backend.onrender.com/api/payments/mpesa-callback/"
                     sensitive={false}
-                    currentValue={secureSettings.find(s => s.key === 'mpesa_callback_url')?.encrypted_value || ''}
+                    currentValue={secureSettings.find(s => s.key === 'mpesa_callback_url')?.encrypted_value || secureSettings.find(s => s.key === 'mpesa_callback_url')?.value || ''}
                     onSave={(val) => handleUpdate('mpesa_callback_url', val, 'mpesa')}
                     onReveal={() => handleReveal('mpesa_callback_url')}
                   />
@@ -645,18 +648,21 @@ const AdminSettings = ({ defaultTab = 'mpesa' }) => {
                 { key: 'sms_provider',  label: 'SMS Provider',  placeholder: "e.g. Africa's Talking or Brevo", sensitive: false },
                 { key: 'sms_api_key',   label: 'API Key',        placeholder: 'Your SMS provider API key',      sensitive: true  },
                 { key: 'sms_sender_id', label: 'Sender ID',      placeholder: 'e.g. AZARIAH',                  sensitive: false },
-              ].map(field => (
-                <CredentialField
-                  key={field.key}
-                  fieldKey={field.key}
-                  label={field.label}
-                  placeholder={field.placeholder}
-                  sensitive={field.sensitive}
-                  currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
-                  onSave={(val) => handleUpdate(field.key, val, 'sms')}
-                  onReveal={() => handleReveal(field.key)}
-                />
-              ))}
+              ].map(field => {
+                const setting = secureSettings.find(s => s.key === field.key);
+                return (
+                  <CredentialField
+                    key={field.key}
+                    fieldKey={field.key}
+                    label={field.label}
+                    placeholder={field.placeholder}
+                    sensitive={field.sensitive}
+                    currentValue={setting?.encrypted_value || setting?.value || ''}
+                    onSave={(val) => handleUpdate(field.key, val, 'sms')}
+                    onReveal={() => handleReveal(field.key)}
+                  />
+                );
+              })}
 
               {/* Test SMS */}
               <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 rounded-xl">
