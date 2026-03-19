@@ -326,15 +326,11 @@ class SecureSettingsView(views.APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminUser]
 
     def get(self, request):
-        group = request.query_params.get("group")
-        if group:
-            # Case-insensitive match but also allow for group lists
-            settings = SecureSettings.objects.filter(setting_group__iexact=group)
-        else:
-            settings = SecureSettings.objects.all()
+        # We ignore group filtering on the backend and return all to the frontend
+        # so the frontend can correctly map pre-existing keys to its UI groups.
+        settings = SecureSettings.objects.all()
         
-        # Log for debugging - remove in production or use proper logging
-        # print(f"Fetching settings for group '{group}'. Found {settings.count()} records.")
+        # print(f"Fetching all secure settings. Found {settings.count()} records.")
         
         serializer = SecureSettingsSerializer(settings, many=True, context={'request': request})
         return Response(serializer.data)
