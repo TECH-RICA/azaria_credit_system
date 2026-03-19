@@ -39,7 +39,12 @@ const CredentialField = ({ fieldKey, label, placeholder, sensitive, currentValue
   const [showInput, setShowInput] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const isConfigured = !!currentValue && currentValue !== '••••••••' && currentValue !== 'null' && currentValue !== '';
+  const isConfigured = !!currentValue && 
+                      currentValue !== '••••••••' && 
+                      currentValue !== '••••••••••••••••' && 
+                      currentValue !== '••••••••••••' && 
+                      currentValue !== 'null' && 
+                      currentValue !== '';
 
   const handleSave = async () => {
     if (!inputValue.trim()) { toast.error('Value cannot be empty'); return; }
