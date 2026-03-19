@@ -11,7 +11,6 @@ import SignupPage from './pages/SignupPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
-import SetupPage from './pages/SetupPage';
 
 // Dashboards
 import AdminDashboard from './dashboards/AdminDashboard';
@@ -28,9 +27,6 @@ const App = () => {
         <IdleTimeout />
         <Toaster position="top-right" />
         <Routes>
-          {/* Setup Route - Outside everything */}
-          <Route path="/setup" element={<SetupPage />} />
-
           {/* Public Routes */}
           <Route element={<PublicRoute />}>
             <Route path="/login" element={<LoginPage />} />

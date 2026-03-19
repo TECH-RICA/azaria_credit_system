@@ -21,8 +21,25 @@ from .models import (
     Branch,
     CustomerDraft,
     SecureSettings,
+    PaybillTransaction,
 )
 from .utils.encryption import encrypt_value
+
+
+class PaybillTransactionSerializer(serializers.ModelSerializer):
+    days_waiting = serializers.SerializerMethodField()
+    needs_contact = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PaybillTransaction
+        fields = "__all__"
+
+    def get_days_waiting(self, obj):
+        from django.utils import timezone
+        return (timezone.now() - obj.created_at).days
+
+    def get_needs_contact(self, obj):
+        return self.get_days_waiting(obj) >= 3
 
 
 class BranchSerializer(serializers.ModelSerializer):

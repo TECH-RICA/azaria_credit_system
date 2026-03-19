@@ -30,10 +30,11 @@ const FinanceOverview = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [loansData, repaymentsData, analytics] = await Promise.all([
+      const [loansData, repaymentsData, analytics, capitalRes] = await Promise.all([
         loanService.getLoans(),
         loanService.getRepayments(),
-        loanService.getFinancialAnalytics()
+        loanService.getFinancialAnalytics(),
+        loanService.api.get('/capital/balance/')
       ]);
 
       // Ensure lists are arrays even if API returns paginated objects or nulls
@@ -49,7 +50,7 @@ const FinanceOverview = () => {
       const overdueLoans = loans.filter(l => l.status === 'OVERDUE');
       const portfolioAtRisk = overdueLoans.reduce((sum, l) => sum + parseFloat(l.principal_amount), 0);
 
-      const availableCapital = analytics.capital?.available_balance || 0;
+      const availableCapital = capitalRes?.data?.balance || analytics.capital?.available_balance || 0;
 
       setData({
         stats: {

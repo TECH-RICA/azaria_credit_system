@@ -120,7 +120,7 @@ const AdminAccounts = () => {
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-all shadow-md active:scale-95"
           >
             <UserPlus className="w-4 h-4" />
-            Invite Associate
+            Invite Admin
           </Button>
         </div>
       </div>

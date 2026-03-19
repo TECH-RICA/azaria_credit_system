@@ -17,8 +17,11 @@ const FinanceDisbursement = () => {
   const fetchApprovedLoans = async () => {
     setLoading(true);
     try {
-      const data = await loanService.getLoans({ status: 'APPROVED' });
-      setLoans(Array.isArray(data) ? data : (data?.results || []));
+      const data = await loanService.getLoans({ status: 'APPROVED', ordering: 'updated_at' });
+      const results = Array.isArray(data) ? data : (data?.results || []);
+      // Sort oldest first
+      const sorted = [...results].sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at));
+      setLoans(sorted);
     } catch (err) {
       toast.error('Failed to fetch approval queue');
     } finally {
@@ -131,15 +134,23 @@ const FinanceDisbursement = () => {
       <Card className="p-0 overflow-hidden">
         <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200">
           <Table
-            headers={['Customer Name', 'ID Number', 'M-Pesa Number', 'Principal', 'Branch', 'Date Approved', 'Action']}
+            headers={['Customer', 'M-Pesa Number', 'Principal', 'Branch', 'Date Approved', 'Action']}
             data={filteredLoans}
             loading={loading}
             renderRow={(loan) => (
-              <tr key={loan.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0 whitespace-nowrap">
-                <td className="px-6 py-4 font-medium text-slate-900">{loan.customer_name}</td>
-                <td className="px-6 py-4 text-slate-600">{loan.national_id || 'N/A'}</td>
-                <td className="px-6 py-4 text-slate-600">{loan.customer_phone}</td>
-                <td className="px-6 py-4 font-bold text-slate-900">{formatKES(loan.principal_amount)}</td>
+              <tr key={loan.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0 whitespace-nowrap text-sm">
+                <td className="px-6 py-4">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-slate-900 leading-tight">
+                      {loan.customer_name}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                      ID: {loan.customer_id_number || loan.national_id || 'N/A'}
+                    </span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-slate-600 font-medium">{loan.customer_phone}</td>
+                <td className="px-6 py-4 font-bold text-emerald-700">{formatKES(loan.principal_amount)}</td>
                 <td className="px-6 py-4">
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
                     {loan.branch_name}

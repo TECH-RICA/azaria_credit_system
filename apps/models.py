@@ -136,6 +136,34 @@ class AuditLogs(models.Model):
         db_table = "audit_logs"
 
 
+class PaybillTransaction(models.Model):
+    STATUS_CHOICES = [
+        ('MATCHED', 'Matched'),
+        ('UNMATCHED', 'Unmatched'),
+        ('MANUALLY_ASSIGNED', 'Manually Assigned'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    receipt_number = models.CharField(max_length=50, unique=True)
+    sender_phone = models.CharField(max_length=20)
+    sender_name = models.CharField(max_length=100, blank=True, null=True)
+    account_ref = models.CharField(max_length=100)  # what customer typed
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    transaction_date = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='UNMATCHED')
+    matched_loan = models.ForeignKey('Loans', on_delete=models.SET_NULL, null=True, blank=True)
+    matched_user = models.ForeignKey('Users', on_delete=models.SET_NULL, null=True, blank=True)
+    match_method = models.CharField(max_length=20, blank=True, null=True)  # 'NATIONAL_ID', 'PHONE', 'MANUAL'
+    assigned_by = models.ForeignKey('Admins', on_delete=models.SET_NULL, null=True, blank=True)
+    assigned_at = models.DateTimeField(null=True, blank=True)
+    contact_attempted = models.BooleanField(default=False)
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'paybill_transactions'
+        ordering = ['-transaction_date']
+
+
 class SecureSettings(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     key = models.CharField(max_length=100, unique=True)

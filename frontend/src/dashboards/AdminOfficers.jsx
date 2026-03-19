@@ -115,7 +115,7 @@ const AdminOfficers = ({ role = 'FINANCIAL_OFFICER' }) => {
             }}
           >
             <UserPlus className="w-4 h-4 mr-2" />
-            Register {role === 'FIELD_OFFICER' ? 'Field Officer' : 'Financial Officer'}
+            Invite {role === 'FIELD_OFFICER' ? 'Field Officer' : 'Finance Officer'}
           </Button>
         </div>
       </div>

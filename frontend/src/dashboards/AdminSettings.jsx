@@ -21,10 +21,121 @@ import {
   Activity,
   UserCheck,
   Building2,
-  Sliders
+  Sliders,
+  Calendar,
+  Clock,
+  LogOut,
+  AlertTriangle
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
+
+const MpesaField = ({ field, currentValue, onSave, onReveal }) => {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [revealed, setRevealed] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [showValue, setShowValue] = useState(false);
+
+  const handleRevealClick = async () => {
+    if (revealed) { setRevealed(null); return; }
+    setLoading(true);
+    try {
+      const res = await onReveal(field.key);
+      setRevealed(res.value);
+    } catch {
+      toast.error('Could not reveal value');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!value.trim()) { toast.error('Value cannot be empty'); return; }
+    setLoading(true);
+    try {
+      await onSave(field.key, value, field.group);
+      toast.success(`${field.label} saved`);
+      setEditing(false);
+      setValue('');
+      setRevealed(null);
+    } catch {
+      toast.error('Failed to save');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const displayValue = revealed || currentValue || '';
+  const maskedValue = displayValue ? (field.sensitive ? '••••••••••••' : displayValue) : 'Not set';
+
+  return (
+    <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+      <label className="text-sm font-bold text-slate-700 dark:text-slate-300 block mb-3">
+        {field.label}
+        {!currentValue && <span className="ml-2 text-[10px] font-bold text-red-500 uppercase">Not configured</span>}
+        {currentValue && <span className="ml-2 text-[10px] font-bold text-emerald-500 uppercase">Configured</span>}
+      </label>
+
+      {editing ? (
+        <div className="space-y-2">
+          <div className="relative">
+            <input
+              type={field.sensitive && !showValue ? 'password' : 'text'}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={field.placeholder}
+              className="w-full px-3 py-2 pr-10 border border-indigo-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-900 dark:border-slate-600"
+              autoFocus
+            />
+            {field.sensitive && (
+              <button
+                type="button"
+                onClick={() => setShowValue(!showValue)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={loading}
+              className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors"
+            >
+              {loading ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setEditing(false); setValue(''); }}
+              className="px-3 py-2 border text-xs font-medium rounded-lg hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 rounded-lg font-mono text-xs text-slate-600 dark:text-slate-400 truncate">
+            {field.sensitive ? (revealed ? revealed : maskedValue) : displayValue || 'Not set'}
+          </div>
+          {field.sensitive && currentValue && (
+            <button onClick={handleRevealClick} disabled={loading} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors" title="Reveal">
+              {revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          )}
+          <button
+            onClick={() => { setValue(revealed || ''); setEditing(true); }}
+            className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors"
+            title="Edit"
+          >
+            <Save className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const SecureSettingRow = ({ item, onUpdate, onReveal }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -112,12 +223,23 @@ const SecureSettingRow = ({ item, onUpdate, onReveal }) => {
   );
 };
 
-const AdminSettings = () => {
+const AdminSettings = ({ defaultTab = 'mpesa' }) => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('mpesa');
+  const [activeTab, setActiveTab] = useState(defaultTab);
   const [secureSettings, setSecureSettings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [testLoading, setTestLoading] = useState(false);
+  
+  // Maintenance State
+  const [maintenanceDate, setMaintenanceDate] = useState('');
+  const [maintenanceTime, setMaintenanceTime] = useState('');
+  const [isMaintenanceActive, setIsMaintenanceActive] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+
+  // Update tab when prop changes (e.g. navigating between /owner/settings/sms and /owner/settings/mpesa)
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
   const allTabs = [
     { id: 'mpesa', label: 'M-Pesa API', icon: Smartphone, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', roles: ['owner', 'super_admin'] },
@@ -125,6 +247,7 @@ const AdminSettings = () => {
     { id: 'system', label: 'System Settings', icon: Sliders, color: 'text-slate-600', bg: 'bg-slate-50 dark:bg-slate-900/20', roles: ['owner', 'super_admin', 'admin'] },
     { id: 'security', label: 'Security & Auth', icon: ShieldCheck, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', roles: ['owner'] },
     { id: 'branches', label: 'Branches', icon: Building2, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', roles: ['owner', 'super_admin', 'admin'] },
+    { id: 'maintenance', label: 'Maintenance', icon: Calendar, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', roles: ['owner', 'super_admin', 'admin'] },
   ];
 
   const visibleTabs = allTabs.filter(tab => {
@@ -144,6 +267,17 @@ const AdminSettings = () => {
     try {
       const data = await loanService.getSecureSettings();
       setSecureSettings(data);
+      
+      // Initialize maintenance state if keys exist
+      const mActive = data.find(s => s.key === 'maintenance_mode_active');
+      const mTime = data.find(s => s.key === 'maintenance_schedule_time');
+      
+      if (mActive) setIsMaintenanceActive(mActive.encrypted_value === 'true');
+      if (mTime && mTime.encrypted_value && mTime.encrypted_value !== '••••••••') {
+          const dt = new Date(mTime.encrypted_value);
+          setMaintenanceDate(dt.toISOString().split('T')[0]);
+          setMaintenanceTime(dt.toTimeString().split(' ')[0].substring(0, 5));
+      }
     } catch (err) {
       toast.error("Failed to load secure settings");
     } finally {
@@ -199,6 +333,29 @@ const AdminSettings = () => {
       toast.error("SMS test failed");
     } finally {
       setTestLoading(false);
+    }
+  };
+
+  const handleMaintenanceSchedule = async (e) => {
+    e.preventDefault();
+    if (!maintenanceDate || !maintenanceTime) {
+      toast.error("Please selected both date and time");
+      return;
+    }
+
+    setScheduling(true);
+    try {
+      const scheduledDateTime = new Date(`${maintenanceDate}T${maintenanceTime}`).toISOString();
+      await loanService.scheduleMaintenance({
+        time: scheduledDateTime,
+        active: isMaintenanceActive
+      });
+      toast.success("Maintenance policy updated successfully");
+      await fetchSecureSettings();
+    } catch (err) {
+      toast.error("Failed to schedule maintenance");
+    } finally {
+      setScheduling(false);
     }
   };
 
@@ -284,56 +441,240 @@ const AdminSettings = () => {
           </Card>
 
           {activeTab === 'mpesa' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <Card className="bg-emerald-50/50 dark:bg-emerald-900/5 border-emerald-100 dark:border-emerald-900/20">
-                  <div className="p-4 flex items-start gap-4">
-                    <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl text-emerald-600">
-                      <Globe className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800 dark:text-white">API Connectivity</h4>
-                      <p className="text-xs text-slate-500 mt-1">Verify credentials with Safaricom Sandbox/Live</p>
-                      <Button 
-                        size="sm" 
-                        className="mt-3 bg-emerald-600 hover:bg-emerald-700"
-                        onClick={testMpesa}
-                        disabled={testLoading}
+            <div className="space-y-6">
+
+              {/* Environment Toggle */}
+              <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <h4 className="font-bold text-slate-800 dark:text-white">Environment</h4>
+                    <p className="text-xs text-slate-500 mt-1">Switch between Safaricom Sandbox (testing) and Production (live money)</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => handleUpdate('mpesa_environment', 'sandbox', 'mpesa')}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                        (secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'sandbox' || !secureSettings.find(s => s.key === 'mpesa_environment'))
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Sandbox
+                    </button>
+                    <button
+                      onClick={() => handleUpdate('mpesa_environment', 'production', 'mpesa')}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                        secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'production'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Production
+                    </button>
+                  </div>
+                </div>
+                {secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'production' && (
+                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-xs font-bold text-red-700">⚠️ PRODUCTION MODE — Real money transactions are active. Double-check all credentials before disbursing.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Credentials Form */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: 'mpesa_consumer_key',      label: 'Consumer Key',          placeholder: 'From Daraja portal',     sensitive: true,  group: 'mpesa' },
+                  { key: 'mpesa_consumer_secret',   label: 'Consumer Secret',       placeholder: 'From Daraja portal',     sensitive: true,  group: 'mpesa' },
+                  { key: 'mpesa_shortcode',         label: 'Paybill / Shortcode',   placeholder: 'e.g. 174379',            sensitive: false, group: 'mpesa' },
+                  { key: 'mpesa_passkey',           label: 'Passkey',               placeholder: 'STK Push passkey',       sensitive: true,  group: 'mpesa' },
+                  { key: 'mpesa_b2c_initiator',     label: 'B2C Initiator Name',    placeholder: 'e.g. testapi',           sensitive: false, group: 'mpesa' },
+                  { key: 'mpesa_b2c_credential',    label: 'B2C Security Credential', placeholder: 'Encrypted credential', sensitive: true,  group: 'mpesa' },
+                ].map(field => (
+                  <MpesaField
+                    key={field.key}
+                    field={field}
+                    currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
+                    onSave={handleUpdate}
+                    onReveal={handleReveal}
+                  />
+                ))}
+
+                {/* Callback URL — full width */}
+                <div className="md:col-span-2">
+                  <MpesaField
+                    field={{ key: 'mpesa_callback_url', label: 'Callback URL', placeholder: 'https://your-backend.onrender.com/api/payments/callback/', sensitive: false, group: 'mpesa' }}
+                    currentValue={secureSettings.find(s => s.key === 'mpesa_callback_url')?.encrypted_value || ''}
+                    onSave={handleUpdate}
+                    onReveal={handleReveal}
+                  />
+                </div>
+
+                {/* Shortcode Type */}
+                <div className="md:col-span-2 p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <h4 className="font-bold text-slate-800 dark:text-white mb-2">Shortcode Type</h4>
+                  <div className="flex gap-3">
+                    {['paybill', 'till'].map(type => (
+                      <button
+                        key={type}
+                        onClick={() => handleUpdate('mpesa_shortcode_type', type, 'mpesa')}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold capitalize transition-colors ${
+                          (secureSettings.find(s => s.key === 'mpesa_shortcode_type')?.encrypted_value || 'paybill') === type
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
                       >
-                        {testLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
-                        Run Test
-                      </Button>
-                    </div>
+                        {type}
+                      </button>
+                    ))}
                   </div>
-               </Card>
-               <Card className="bg-blue-50/50 dark:bg-blue-900/5 border-blue-100 dark:border-blue-900/20">
-                  <div className="p-4 flex items-start gap-4">
-                    <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl text-blue-600">
-                      <Smartphone className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800 dark:text-white">Callback Health</h4>
-                      <p className="text-xs text-slate-500 mt-1">Ensures payment notifications are reaching system</p>
-                      <Badge className="mt-3 bg-blue-100 text-blue-700 border-none">Active</Badge>
-                    </div>
-                  </div>
-               </Card>
+                  <p className="text-xs text-slate-400 mt-2">Paybill allows customers to enter account reference (National ID). Recommended.</p>
+                </div>
+              </div>
+
+              {/* Test Connection */}
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30 rounded-xl flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h4 className="font-bold text-emerald-800 dark:text-emerald-300">Test Connection</h4>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">Verify your credentials work by connecting to Daraja API</p>
+                </div>
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={testMpesa}
+                  disabled={testLoading}
+                >
+                  {testLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
+                  Test M-Pesa Connection
+                </Button>
+              </div>
             </div>
           )}
 
           {activeTab === 'sms' && (
-            <Card className="bg-indigo-50/50 dark:bg-indigo-900/5 border-indigo-100 dark:border-indigo-900/20">
-                 <div className="p-6 text-center">
-                    <MessageSquare className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
-                    <h3 className="font-bold text-lg">SMS Integration Test</h3>
-                    <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
-                        Send a test SMS through Africa's Talking to verify your API Key and Sender ID setup.
-                    </p>
-                    <Button onClick={testSMS} disabled={testLoading}>
-                        {testLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Smartphone className="w-4 h-4 mr-2" />}
-                        Send Test Message
-                    </Button>
-                 </div>
-            </Card>
+            <div className="space-y-4">
+              {[
+                { key: 'sms_provider',   label: 'SMS Provider',  placeholder: 'e.g. Africa\'s Talking', sensitive: false, group: 'sms' },
+                { key: 'sms_api_key',    label: 'API Key',        placeholder: 'Your SMS provider API key', sensitive: true, group: 'sms' },
+                { key: 'sms_sender_id',  label: 'Sender ID',      placeholder: 'e.g. AZARIAH',           sensitive: false, group: 'sms' },
+              ].map(field => (
+                <MpesaField
+                  key={field.key}
+                  field={field}
+                  currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
+                  onSave={handleUpdate}
+                  onReveal={handleReveal}
+                />
+              ))}
+
+              {/* Test SMS */}
+              <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 rounded-xl">
+                <h4 className="font-bold text-indigo-800 dark:text-indigo-300 mb-2">Send Test SMS</h4>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder="Phone number e.g. 0712345678"
+                    id="test-sms-phone"
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <Button onClick={testSMS} disabled={testLoading}>
+                    {testLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Send Test'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'maintenance' && (
+            <div className="space-y-6">
+              <Card className="bg-orange-50/50 dark:bg-orange-900/5 border-orange-100 dark:border-orange-900/20">
+                <div className="p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-xl text-orange-600">
+                        <Calendar className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800 dark:text-white">Scheduled Maintenance</h4>
+                        <p className="text-xs text-slate-500">Configure system-wide maintenance windows</p>
+                      </div>
+                    </div>
+                    <Badge variant={isMaintenanceActive ? "solid" : "outline"} className={isMaintenanceActive ? "bg-orange-500 text-white" : "border-orange-200 text-orange-600"}>
+                      {isMaintenanceActive ? "Policy: ACTIVE" : "Policy: INACTIVE"}
+                    </Badge>
+                  </div>
+
+                  <form onSubmit={handleMaintenanceSchedule} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> Scheduled Date
+                        </label>
+                        <input 
+                          type="date"
+                          className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm"
+                          value={maintenanceDate}
+                          onChange={(e) => setMaintenanceDate(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> Scheduled Time
+                        </label>
+                        <input 
+                          type="time"
+                          className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm"
+                          value={maintenanceTime}
+                          onChange={(e) => setMaintenanceTime(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-white/50 dark:bg-slate-800/50 rounded-lg border border-orange-100 dark:border-orange-900/10 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={clsx(
+                          "w-10 h-5 rounded-full relative cursor-pointer transition-colors",
+                          isMaintenanceActive ? "bg-orange-500" : "bg-slate-300"
+                        )} onClick={() => setIsMaintenanceActive(!isMaintenanceActive)}>
+                          <div className={clsx(
+                            "absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform",
+                            isMaintenanceActive ? "translate-x-5.5" : "translate-x-0.5"
+                          )} />
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable Maintenance Window</span>
+                      </div>
+                      <Button type="submit" disabled={scheduling} className="bg-orange-600 hover:bg-orange-700">
+                        {scheduling ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                        Apply Policy
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+              </Card>
+
+              <Card className="border-indigo-100 dark:border-indigo-900/20 bg-indigo-50/20 dark:bg-indigo-900/5">
+                <div className="p-5 flex gap-4">
+                  <div className="p-3 bg-indigo-100 dark:bg-indigo-900/30 rounded-xl h-fit text-indigo-600">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-3">
+                    <h4 className="font-bold text-slate-800 dark:text-white">Maintenance Best Practices</h4>
+                    <ul className="space-y-2">
+                       <li className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                         <div className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
+                         <b>Night/Weekends:</b> Maintenance should preferably be scheduled during low-traffic periods like weekends (Saturday night onwards) or late nights (11 PM - 4 AM).
+                       </li>
+                       <li className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                         <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />
+                         <b>Auto Log-out:</b> When the scheduled time is reached, the system will automatically terminate all active sessions (excluding Owner accounts) and prevent new logins until maintenance is disabled.
+                       </li>
+                       <li className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                         <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                         <b>Notification:</b> SMS and Email alerts will be sent to all active users 15 minutes before the maintenance window begins.
+                       </li>
+                    </ul>
+                  </div>
+                </div>
+              </Card>
+            </div>
           )}
         </div>
 

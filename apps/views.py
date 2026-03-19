@@ -38,6 +38,10 @@ from .models import (
     Branch,
     SecureSettings,
     CustomerDraft,
+    PaybillTransaction,
+    RepaymentSchedule,
+    SystemCapital,
+    LedgerEntry,
 )
 from .serializers import (
     AdminSerializer,
@@ -59,10 +63,11 @@ from .serializers import (
     BranchSerializer,
     CustomerDraftSerializer,
     SecureSettingsSerializer,
+    PaybillTransactionSerializer,
 )
 from .utils.mpesa import MpesaHandler
 from .utils.sms import send_sms_async
-from .utils.security import log_action, get_client_ip
+from .utils.security import log_action, get_client_ip, get_filtered_queryset
 from .utils.encryption import decrypt_value, get_setting
 from .permissions import (
     IsSuperAdmin,
@@ -139,7 +144,7 @@ def send_invitation_email_async(email, role, invited_by_name, token, branch=None
             )
             return
 
-        # You would typically have a frontend URL for invitations
+        # Use standard signup page for everyone
         invite_url = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/signup?token={token}&email={email}&role={role}"
         if branch:
             invite_url += f"&branch={branch}"
@@ -827,31 +832,7 @@ class UserListCreateView(generics.ListCreateAPIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_queryset(self):
-        user = self.request.user
-        if not user or not user.is_authenticated:
-            return Users.objects.none()
-
-        # optimization: prefetch profile to avoid N+1
-        users = Users.objects.select_related("profile", "created_by")
-
-        user_role = getattr(user, "role", "ADMIN")
-
-        # FINANCE, SUPER_ADMIN and ADMIN see everything
-        if user_role in ["FINANCIAL_OFFICER", "SUPER_ADMIN", "ADMIN"]:
-            return users.order_by("-created_at")
-
-        # FIELD_OFFICER only sees those they created
-        if user_role == "FIELD_OFFICER":
-            return users.filter(created_by=user).order_by("-created_at")
-
-        # MANAGERS and other roles see only their branch
-        if user.branch_fk:
-            return users.filter(profile__branch_fk=user.branch_fk).order_by(
-                "-created_at"
-            )
-
-        # Fallback for roles without a branch (but aren't finance/super)
-        return users.none()
+        return get_filtered_queryset(self.request.user, Users.objects.select_related("profile", "created_by"), 'profile__branch_fk').order_by("-created_at")
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -1034,28 +1015,7 @@ class LoanListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        if not user or not user.is_authenticated:
-            return Loans.objects.none()
-
-        # Optimization: Select related user and profile to prevent N+1 queries
-        loans = Loans.objects.select_related("user", "user__profile", "loan_product")
-
-        user_role = getattr(user, "role", "ADMIN")
-
-        # FINANCE, SUPER_ADMIN and ADMIN see everything
-        if user_role in ["FINANCIAL_OFFICER", "SUPER_ADMIN", "ADMIN"]:
-            return loans.order_by("-created_at")
-
-        # FIELD_OFFICERS see only what they created
-        if user_role == "FIELD_OFFICER":
-            return loans.filter(created_by=user).order_by("-created_at")
-
-        # MANAGERS and other roles see only their branch
-        if user.branch_fk:
-            return loans.filter(branch=user.branch_fk).order_by("-created_at")
-
-        return loans.none()
+        return get_filtered_queryset(self.request.user, Loans.objects.select_related("user", "user__profile", "loan_product"), 'branch').order_by("-created_at")
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -1192,21 +1152,7 @@ class RepaymentListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        if not user or not user.is_authenticated:
-            return Repayments.objects.none()
-
-        repayments = Repayments.objects.all()
-
-        if hasattr(user, "role") and user.role in ["ADMIN", "SUPER_ADMIN", "FINANCIAL_OFFICER"]:
-            pass # See all repayments
-        elif hasattr(user, "role") and user.role == "MANAGER":
-            repayments = repayments.filter(loan__user__profile__branch_fk=user.branch_fk)
-
-        elif hasattr(user, "role") and user.role == "FIELD_OFFICER":
-            repayments = repayments.filter(loan__created_by=user)
-
-        return repayments.order_by("-payment_date")
+        return get_filtered_queryset(self.request.user, Repayments.objects.all(), 'loan__user__profile__branch_fk').order_by("-payment_date")
 
     def perform_create(self, serializer):
         from django.db import transaction
@@ -1919,7 +1865,12 @@ class OwnerNotificationsView(views.APIView):
         
         # Read last read timestamp from settings? Or let frontend handle it? 
         # Request asks for last-read timestamp in SystemSettings key 'owner_last_read_notifications'
-        last_read_str = get_setting('owner_last_read_notifications', '2000-01-01 00:00:00')
+        try:
+            setting_obj = SystemSettings.objects.get(key='owner_last_read_notifications')
+            last_read_str = setting_obj.value
+        except SystemSettings.DoesNotExist:
+            last_read_str = '2000-01-01 00:00:00'
+            
         from datetime import datetime
         try:
             last_read = datetime.strptime(last_read_str, '%Y-%m-%d %H:%M:%S')
@@ -2518,6 +2469,29 @@ class AdminRevokeView(views.APIView):
             return Response({"error": "Admin not found"}, status=404)
 
 
+class CapitalBalanceView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .models import SystemCapital, LedgerEntry
+        capital = SystemCapital.objects.filter(name="Simulation Capital").first()
+        
+        total_disbursed = LedgerEntry.objects.filter(
+            entry_type="DISBURSEMENT"
+        ).aggregate(total=models.Sum('amount'))['total'] or 0
+        
+        total_repaid = LedgerEntry.objects.filter(
+            entry_type="REPAYMENT"
+        ).aggregate(total=models.Sum('amount'))['total'] or 0
+
+        return Response({
+            "balance": float(capital.balance) if capital else 0,
+            "total_disbursed": float(total_disbursed),
+            "total_repaid": float(total_repaid),
+            "account_name": capital.name if capital else "Simulation Capital",
+        })
+
+
 class AdminListCreateView(generics.ListCreateAPIView):
     serializer_class = AdminSerializer
     permission_classes = [permissions.AllowAny]
@@ -2645,7 +2619,7 @@ class RegisterAdminView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        valid_roles = ["ADMIN", "MANAGER", "FINANCIAL_OFFICER", "FIELD_OFFICER"]
+        valid_roles = ["ADMIN", "MANAGER", "FINANCIAL_OFFICER", "FIELD_OFFICER", "SUPER_ADMIN"]
         if role not in valid_roles:
             return Response(
                 {"error": f"Role must be one of: {', '.join(valid_roles)}"},
@@ -2653,10 +2627,10 @@ class RegisterAdminView(views.APIView):
             )
 
         # Requirement: Everyone must have an invitation if the system is already initialized
-        # First ADMIN can register without invitation
+        # First OWNER can register without invitation
         is_initialized = Admins.objects.filter(is_owner=True).exists()
 
-        inviter = None
+        inviter_admin = None
         branch_fk = None
         if is_initialized:
             if not invitation_token:
@@ -2676,7 +2650,7 @@ class RegisterAdminView(views.APIView):
                 )
 
                 # Assign inviter and branch
-                inviter = invite.invited_by_admin
+                inviter = invite.invited_by or invite.invited_by_admin
                 branch_fk = invite.branch_fk
 
                 # If the new user is a Field Officer, their branch is locked
@@ -2706,6 +2680,13 @@ class RegisterAdminView(views.APIView):
         )
 
         # Signup Completion
+        # If invitation was 'OWNER', the new admin becomes an owner
+        is_owner = False
+        inviter_admin = invite.invited_by or invite.invited_by_admin if 'invite' in locals() else None
+        if inviter_admin and inviter_admin.is_owner:
+            if role in ["SUPER_ADMIN", "ADMIN"]:
+                is_owner = True
+
         admin = Admins.objects.create(
             id=uuid.uuid4(),
             full_name=full_name,
@@ -2716,9 +2697,13 @@ class RegisterAdminView(views.APIView):
             password_hash=password_hash,
             verification_token=verification_code,
             is_verified=False,
-            is_super_admin=(role == "ADMIN"),
-            invited_by=inviter,
+            is_super_admin=(role == "SUPER_ADMIN") or (role == "ADMIN"),
+            is_owner=is_owner,
+            invited_by=inviter_admin,
             branch_fk=branch_fk,
+            is_primary_owner=False,
+            ownership_granted_by=inviter_admin if is_owner else None,
+            ownership_granted_at=timezone.now() if is_owner else None
         )
 
         # Mark invite used
@@ -3649,20 +3634,23 @@ class AdminInviteView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        inviter = request.user
-        inviter_role = getattr(inviter, "role", "ADMIN")
-        if inviter.is_owner:
-            inviter_role = "OWNER"
-        elif inviter.is_super_admin:
-            inviter_role = "SUPER_ADMIN"
-
         INVITE_PERMISSIONS = {
-            'OWNER': ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'FINANCIAL_OFFICER', 'FIELD_OFFICER'],
+            'OWNER': ['SUPER_ADMIN', 'ADMIN'],
             'SUPER_ADMIN': ['ADMIN', 'FINANCIAL_OFFICER'],
             'ADMIN': ['MANAGER'],
             'MANAGER': ['FIELD_OFFICER'],
             'FIELD_OFFICER': [],
         }
+
+        def get_inviter_type(user):
+            if getattr(user, 'is_owner', False):
+                return 'OWNER'
+            if getattr(user, 'is_super_admin', False):
+                return 'SUPER_ADMIN'
+            return getattr(user, 'role', '')
+
+        inviter = request.user
+        inviter_role = get_inviter_type(inviter)
 
         emails = request.data.get("emails") or request.data.get("email")
         role = request.data.get("role")
@@ -3754,6 +3742,255 @@ class AdminInviteView(views.APIView):
             },
             status=201,
         )
+
+
+import csv, io
+from django.utils import timezone
+from datetime import datetime
+
+def _record_repayment(txn, loan, customer, match_method, processed_by):
+    """Record a matched repayment and update all related records."""
+    from django.db import transaction as db_transaction
+    with db_transaction.atomic():
+        # Update transaction
+        txn.status = 'MATCHED'
+        txn.matched_loan = loan
+        txn.matched_user = customer
+        txn.match_method = match_method
+        txn.assigned_by = processed_by
+        txn.assigned_at = timezone.now()
+        txn.save()
+
+        # Record repayment
+        repayment = Repayments.objects.create(
+            loan=loan,
+            amount_paid=txn.amount,
+            payment_method='PAYBILL',
+            reference_code=txn.receipt_number,
+            payment_date=txn.transaction_date
+        )
+
+        # Update capital
+        capital = SystemCapital.objects.select_for_update().filter(
+            name="Simulation Capital"
+        ).first()
+        if capital:
+            capital.balance += txn.amount
+            capital.save()
+            LedgerEntry.objects.create(
+                capital_account=capital,
+                amount=txn.amount,
+                entry_type="REPAYMENT",
+                loan=loan,
+                reference_id=txn.receipt_number,
+                note=f"Paybill repayment matched by {match_method}"
+            )
+
+        # Mark repayment schedule installments
+        amount_remaining = float(txn.amount)
+        for installment in RepaymentSchedule.objects.filter(
+            loan=loan, is_paid=False
+        ).order_by('due_date'):
+            if amount_remaining <= 0:
+                break
+            if amount_remaining >= float(installment.amount_due):
+                installment.is_paid = True
+                installment.save()
+                amount_remaining -= float(installment.amount_due)
+            else:
+                break
+
+        # Check if loan fully paid
+        loan.refresh_from_db()
+        if loan.remaining_balance <= 0:
+            loan.status = 'CLOSED'
+            loan.save()
+
+        # Send SMS confirmation to customer
+        remaining = max(0, float(loan.remaining_balance))
+        msg = (
+            f"Dear {customer.full_name}, your repayment of KES {float(txn.amount):,.2f} "
+            f"has been received (Ref: {txn.receipt_number}). "
+            f"{'Your loan is fully repaid. Thank you!' if remaining <= 0 else f'Remaining balance: KES {remaining:,.2f}.'}"
+            f" - Azariah Credit Ltd"
+        )
+        try:
+            from .utils.sms import send_sms_async
+            send_sms_async([customer.phone], msg)
+            from .models import SMSLog
+            SMSLog.objects.create(
+                recipient_phone=customer.phone,
+                recipient_name=customer.full_name,
+                message=msg,
+                type="REPAYMENT_CONFIRMATION",
+                status="SENT"
+            )
+        except Exception:
+            pass
+
+        # Audit log
+        from .utils.security import log_action
+        log_action(
+            processed_by,
+            f"Repayment of KES {float(txn.amount):,.2f} matched by {match_method} for loan {loan.id.hex[:8]}",
+            "repayments", loan.id, log_type="STATUS"
+        )
+
+class StatementUploadView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if getattr(user, 'role', None) not in ['FINANCIAL_OFFICER', 'ADMIN'] and not getattr(user, 'is_owner', False) and not getattr(user, 'is_super_admin', False):
+            return Response({"error": "Unauthorized"}, status=403)
+
+        file = request.FILES.get('statement')
+        if not file:
+            return Response({"error": "No file uploaded"}, status=400)
+
+        if not file.name.endswith('.csv'):
+            return Response({"error": "File must be a CSV"}, status=400)
+
+        decoded = file.read().decode('utf-8')
+        reader = csv.DictReader(io.StringIO(decoded))
+
+        results = {
+            'matched_national_id': 0,
+            'matched_phone': 0,
+            'unmatched': 0,
+            'duplicates': 0,
+            'errors': []
+        }
+
+        for row in reader:
+            try:
+                # Handle different Safaricom CSV column names
+                receipt = (row.get('Receipt No') or row.get('TransID') or 
+                          row.get('receipt_number') or '').strip()
+                sender_phone = (row.get('Sender Phone') or row.get('MSISDN') or 
+                               row.get('sender_phone') or '').strip()
+                account_ref = (row.get('Account Number') or row.get('BillRefNumber') or 
+                              row.get('account_ref') or '').strip()
+                amount_str = (row.get('Amount') or row.get('TransAmount') or '0').strip()
+                amount = float(amount_str.replace(',', ''))
+                sender_name = (row.get('Sender Name') or row.get('FirstName') or '').strip()
+                date_str = (row.get('Date') or row.get('TransTime') or '').strip()
+
+                if not receipt:
+                    continue
+
+                # Skip duplicates
+                if PaybillTransaction.objects.filter(receipt_number=receipt).exists():
+                    results['duplicates'] += 1
+                    continue
+
+                # Try to parse date
+                try:
+                    transaction_date = datetime.strptime(date_str, '%Y%m%d%H%M%S')
+                except:
+                    try:
+                        transaction_date = datetime.strptime(date_str, '%d/%m/%Y %H:%M:%S')
+                    except:
+                        transaction_date = timezone.now()
+
+                # Create transaction record
+                txn = PaybillTransaction.objects.create(
+                    receipt_number=receipt,
+                    sender_phone=sender_phone,
+                    sender_name=sender_name,
+                    account_ref=account_ref,
+                    amount=amount,
+                    transaction_date=timezone.make_aware(transaction_date) if transaction_date.tzinfo is None else transaction_date,
+                    status='UNMATCHED'
+                )
+
+                # LEVEL 1 — Match by National ID
+                matched = False
+                try:
+                    from .models import UserProfiles
+                    profile = UserProfiles.objects.get(national_id=account_ref)
+                    loan = Loans.objects.filter(
+                        user=profile.user,
+                        status__in=['ACTIVE', 'OVERDUE']
+                    ).order_by('created_at').first()
+                    if loan:
+                        _record_repayment(txn, loan, profile.user, 'NATIONAL_ID', user)
+                        results['matched_national_id'] += 1
+                        matched = True
+                except UserProfiles.DoesNotExist:
+                    pass
+
+                # LEVEL 2 — Match by sender phone
+                if not matched and sender_phone:
+                    normalized_phone = sender_phone.replace('+', '').strip()
+                    if normalized_phone.startswith('254'):
+                        normalized_phone = '0' + normalized_phone[3:]
+                    try:
+                        customer = Users.objects.get(phone=normalized_phone)
+                        loan = Loans.objects.filter(
+                            user=customer,
+                            status__in=['ACTIVE', 'OVERDUE']
+                        ).order_by('created_at').first()
+                        if loan:
+                            _record_repayment(txn, loan, customer, 'PHONE', user)
+                            results['matched_phone'] += 1
+                            matched = True
+                    except Users.DoesNotExist:
+                        pass
+
+                if not matched:
+                    results['unmatched'] += 1
+
+            except Exception as e:
+                results['errors'].append(str(e))
+
+        return Response({
+            "message": "Statement processed",
+            "results": results
+        })
+
+
+class AssignTransactionView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        txn_id = request.data.get('transaction_id')
+        loan_id = request.data.get('loan_id')
+
+        if not txn_id or not loan_id:
+            return Response({"error": "transaction_id and loan_id required"}, status=400)
+
+        try:
+            txn = PaybillTransaction.objects.get(id=txn_id, status='UNMATCHED')
+            loan = Loans.objects.get(id=loan_id, status__in=['ACTIVE', 'OVERDUE'])
+        except PaybillTransaction.DoesNotExist:
+            return Response({"error": "Transaction not found or already matched"}, status=404)
+        except Loans.DoesNotExist:
+            return Response({"error": "Loan not found or not active"}, status=404)
+
+        _record_repayment(txn, loan, loan.user, 'MANUAL', request.user)
+        txn.status = 'MANUALLY_ASSIGNED'
+        txn.save()
+
+        return Response({"message": "Transaction assigned successfully"})
+
+
+class UnmatchedTransactionsView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        since = request.query_params.get('since')
+        if since:
+            # Polling mode
+            new_count = PaybillTransaction.objects.filter(
+                status='UNMATCHED',
+                created_at__gt=since
+            ).count()
+            return Response({"new_count": new_count})
+
+        txns = PaybillTransaction.objects.filter(status='UNMATCHED').order_by('transaction_date')
+        serializer = PaybillTransactionSerializer(txns, many=True)
+        return Response(serializer.data)
 
 
 class DirectSMSView(views.APIView):

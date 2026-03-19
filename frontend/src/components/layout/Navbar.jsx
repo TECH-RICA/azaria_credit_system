@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Search, User, LogOut, Settings, ChevronDown, CheckCheck, Menu } from 'lucide-react';
+import { Bell, User, LogOut, Settings, ChevronDown, CheckCheck, Menu } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { loanService } from '../../api/api';
@@ -102,14 +102,7 @@ const Navbar = ({ title, onMenuClick, isSidebarOpen }) => {
       </div>
 
       <div className="flex items-center space-x-1 sm:space-x-3 md:space-x-4">
-        <div className="relative hidden xl:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search..."
-            className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:bg-slate-800 dark:border-slate-700 w-48 2xl:w-64"
-          />
-        </div>
+        
 
         <div className="relative">
           <button 

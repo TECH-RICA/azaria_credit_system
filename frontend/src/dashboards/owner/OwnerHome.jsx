@@ -22,30 +22,45 @@ const OwnerHome = () => {
   const [recentSecurity, setRecentSecurity] = useState([]);
   const [recentAudit, setRecentAudit] = useState([]);
   const [systemStatus, setSystemStatus] = useState({
-    mpesa_env: 'sandbox', capital_balance: 0, low_capital: false
+    mpesa_env: 'sandbox', capital_balance: 0, low_capital: false, maintenance: false
   });
   const [loading, setLoading] = useState(true);
+  const [toggling, setToggling] = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const [loansRes, analyticsRes, staffRes, securityRes, auditRes] = await Promise.all([
+        const [loansRes, analyticsRes, staffRes, securityRes, auditRes, settingsRes, capitalRes] = await Promise.all([
           loanService.getLoans(),
-          loanService.getFinancialAnalytics(),
+          loanService.api.get('/finance/analytics/'),
           loanService.api.get('/admins/'),
           loanService.api.get('/security-logs/?limit=5'),
           loanService.api.get('/owner-audit/?limit=5'),
+          loanService.api.get('/settings/'),
+          loanService.api.get('/capital/balance/'),
         ]);
+
+        const settings = settingsRes?.data || settingsRes || {};
+        const isMaintenance = settings.MAINTENANCE_MODE || false;
 
         const loans = loansRes?.results || loansRes || [];
         const activeLoans = loans.filter(l => ['ACTIVE', 'DISBURSED', 'OVERDUE'].includes(l.status));
         const overdueLoans = loans.filter(l => l.status === 'OVERDUE');
 
+        const capitalBalance = capitalRes?.data?.balance || analyticsRes?.balance || 0;
+
         setStats({
           portfolio: activeLoans.reduce((s, l) => s + Number(l.principal_amount || 0), 0),
           collected: analyticsRes?.money_in || 0,
-          capital: analyticsRes?.balance || 0,
+          capital: capitalBalance,
           overdue: overdueLoans.reduce((s, l) => s + Number(l.principal_amount || 0), 0),
+        });
+
+        setSystemStatus({
+          mpesa_env: settings.MPESA_ENV || 'sandbox',
+          capital_balance: capitalBalance,
+          low_capital: capitalBalance < 50000,
+          maintenance: isMaintenance
         });
 
         const staff = staffRes?.data?.results || staffRes?.data || [];
@@ -60,12 +75,6 @@ const OwnerHome = () => {
 
         setRecentSecurity(securityRes?.data?.results || securityRes?.data || []);
         setRecentAudit(auditRes?.data?.results || auditRes?.data || []);
-
-        setSystemStatus({
-          mpesa_env: analyticsRes?.mpesa_env || 'sandbox',
-          capital_balance: analyticsRes?.balance || 0,
-          low_capital: (analyticsRes?.balance || 0) < 50000,
-        });
       } catch (e) {
         console.error('Owner dashboard fetch error:', e);
       } finally {
@@ -74,6 +83,22 @@ const OwnerHome = () => {
     };
     fetchAll();
   }, []);
+
+  const toggleMaintenance = async () => {
+    if (!window.confirm(`Are you sure you want to ${systemStatus.maintenance ? 'DISABLE' : 'ENABLE'} Maintenance Mode? All staff actions will be restricted.`)) return;
+    
+    setToggling(true);
+    try {
+      await loanService.api.post('/settings/', { 
+        MAINTENANCE_MODE: !systemStatus.maintenance 
+      });
+      setSystemStatus(prev => ({ ...prev, maintenance: !prev.maintenance }));
+    } catch (err) {
+      console.error('Failed to toggle maintenance mode');
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const staffCards = [
     { label: 'Super Admins', count: staffCounts.super_admins, color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-900/10', border: 'border-purple-100 dark:border-purple-800/30', path: '/admin/super-admins' },
@@ -245,6 +270,28 @@ const OwnerHome = () => {
             <p className={`text-sm font-bold ${systemStatus.low_capital ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
               KES {Number(systemStatus.capital_balance).toLocaleString()}
             </p>
+          </div>
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800/50 flex justify-between items-center">
+            <div>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Maintenance Mode</p>
+              <div className="flex items-center gap-2">
+                <ShieldAlert className={`w-4 h-4 ${systemStatus.maintenance ? 'text-red-500' : 'text-slate-400'}`} />
+                <span className={`text-sm font-bold ${systemStatus.maintenance ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-slate-400'}`}>
+                  {systemStatus.maintenance ? 'System Offline' : 'System Online'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={toggleMaintenance}
+              disabled={toggling}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                systemStatus.maintenance 
+                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 bordr border-emerald-200' 
+                  : 'bg-red-100 text-red-700 hover:bg-red-200 border border-red-200'
+              }`}
+            >
+              {toggling ? 'Updating...' : systemStatus.maintenance ? 'GO ONLINE' : 'GO OFFLINE'}
+            </button>
           </div>
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800/50">
             <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">God Mode</p>

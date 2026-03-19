@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { X, Mail, Shield, Plus, Trash2, Loader2, MapPin } from 'lucide-react';
 import { loanService } from '../../api/api';
 import { Button, Card } from '../ui/Shared';
+import { useAuth } from '../../context/AuthContext';
 
 const BulkInviteModal = ({ isOpen, onClose, defaultRole = 'FIELD_OFFICER', branches = [] }) => {
+  const { user } = useAuth();
   const [role, setRole] = useState(defaultRole);
   const [branch, setBranch] = useState('');
   const [emails, setEmails] = useState(['']);
@@ -101,6 +103,7 @@ const BulkInviteModal = ({ isOpen, onClose, defaultRole = 'FIELD_OFFICER', branc
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
               >
+                {user?.is_owner && <option value="SUPER_ADMIN">Super Admin</option>}
                 <option value="ADMIN">Admin</option>
                 <option value="MANAGER">Manager</option>
                 <option value="FINANCIAL_OFFICER">Finance Officer</option>

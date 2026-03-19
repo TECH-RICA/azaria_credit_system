@@ -130,7 +130,7 @@ const AdminManagers = () => {
             onClick={() => setIsInviting(true)}
           >
             <UserPlus className="w-4 h-4 mr-2" />
-            Register Manager
+            Invite Manager
           </Button>
         </div>
       </div>

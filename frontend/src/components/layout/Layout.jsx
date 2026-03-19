@@ -27,7 +27,8 @@ const Layout = ({ children, title }) => {
   ];
 
   const showGodModeBanner = user?.is_owner && 
-    !noBannerPaths.some(path => location.pathname.startsWith(path));
+    activeRole !== user?.role &&
+    !location.pathname.startsWith('/owner');
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">

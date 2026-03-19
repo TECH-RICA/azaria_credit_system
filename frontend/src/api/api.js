@@ -205,11 +205,25 @@ export const loanService = {
     return res.data;
   },
   updateSecureSetting: async (key, value, group) => {
-    const res = await api.post('/settings/secure/', { key, value, group });
+    const res = await api.post('/settings/secure/', { key, encrypted_value: value, setting_group: group });
     return res.data;
   },
   revealSecureSetting: async (key) => {
     const res = await api.post(`/settings/secure/${key}/reveal/`);
+    return res.data;
+  },
+  scheduleMaintenance: async (data) => {
+    // We send time and active status as secure settings
+    await api.post('/settings/secure/', { 
+      key: 'maintenance_schedule_time', 
+      encrypted_value: data.time, 
+      setting_group: 'SECURITY' 
+    });
+    const res = await api.post('/settings/secure/', { 
+      key: 'maintenance_mode_active', 
+      encrypted_value: data.active ? 'true' : 'false', 
+      setting_group: 'SECURITY' 
+    });
     return res.data;
   },
   testMpesaConnection: async () => {

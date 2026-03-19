@@ -7,6 +7,8 @@ import FinanceAnalytics from './finance/FinanceAnalytics';
 import FinanceLedger from './finance/FinanceLedger';
 import FinanceReports from './finance/FinanceReports';
 import FinanceControl from './finance/FinanceControl';
+import UnmatchedRepayments from './finance/UnmatchedRepayments';
+import StatementUpload from './finance/StatementUpload';
 import CustomerCommunicator from './CustomerCommunicator';
 import ProfileSettings from '../pages/ProfileSettings';
 
@@ -17,6 +19,8 @@ const FinanceDashboardWrapper = () => {
         <Route index element={<FinanceOverview />} />
         <Route path="overview" element={<FinanceOverview />} />
         <Route path="disbursement" element={<FinanceDisbursement />} />
+        <Route path="unmatched" element={<UnmatchedRepayments />} />
+        <Route path="upload" element={<StatementUpload />} />
         <Route path="analytics" element={<FinanceAnalytics />} />
         <Route path="ledger" element={<FinanceLedger />} />
         <Route path="reports" element={<FinanceReports />} />

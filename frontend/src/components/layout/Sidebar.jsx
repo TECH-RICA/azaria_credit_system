@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -22,9 +22,12 @@ import {
   ClipboardList,
   Lock,
   Crown,
-  Sliders
+  Sliders,
+  AlertCircle,
+  Upload
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { loanService } from '../../api/api';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import CollapsableSection from './CollapsableSection';
@@ -43,6 +46,31 @@ function cn(...inputs) {
 const Sidebar = ({ isOpen, onClose }) => {
   const { user, logout, activeRole, switchActiveRole } = useAuth();
   const navigate = useNavigate();
+
+  // Poll for new repayments every 15 seconds
+  const [newRepaymentCount, setNewRepaymentCount] = useState(0);
+  const lastRepaymentCheck = useRef(localStorage.getItem('last_repayment_check') || new Date().toISOString());
+
+  useEffect(() => {
+    if (activeRole !== 'FINANCIAL_OFFICER' && activeRole !== 'ADMIN' && activeRole !== 'SUPER_ADMIN') {
+      return;
+    }
+    const checkNewRepayments = async () => {
+      try {
+        const res = await loanService.api.get(
+          `/repayments/unmatched/?since=${lastRepaymentCheck.current}`
+        );
+        const count = res.data?.new_count || 0;
+        setNewRepaymentCount(count);
+      } catch (e) {
+        // Silent fail
+      }
+    };
+
+    checkNewRepayments();
+    const interval = setInterval(checkNewRepayments, 15000);
+    return () => clearInterval(interval);
+  }, [activeRole]);
 
   const getGuide = () => {
     if (activeRole === 'ADMIN' || activeRole === 'SUPER_ADMIN') return adminGuide;
@@ -89,6 +117,8 @@ const Sidebar = ({ isOpen, onClose }) => {
     { to: '/finance/disbursement', icon: Send, label: 'Disbursement Queue' },
     { to: '/finance/analytics', icon: BarChart3, label: 'Analytics' },
     { to: '/finance/ledger', icon: FileText, label: 'Ledger' },
+    { to: '/finance/unmatched', icon: AlertCircle, label: 'Unmatched Payments', badge: true },
+    { to: '/finance/upload', icon: Upload, label: 'Upload Statement' },
     { to: '/finance/reports', icon: ClipboardList, label: 'Reports' },
     { to: '/finance/control', icon: Settings, label: 'Financial Control' },
     { to: '/finance/customer-communicator', icon: MessageSquare, label: 'Customer Comms' },
@@ -174,19 +204,32 @@ const Sidebar = ({ isOpen, onClose }) => {
               to={link.to}
               onClick={() => {
                 if (window.innerWidth < 1024) onClose();
+                if (link.badge) {
+                  setNewRepaymentCount(0);
+                  localStorage.setItem('last_repayment_check', new Date().toISOString());
+                }
               }}
               className={({ isActive }) => cn(
-                "flex items-center px-4 py-2.5 text-sm font-medium rounded-lg transition-colors",
+                "flex items-center px-4 py-2.5 text-sm font-medium rounded-lg transition-colors justify-between",
                 isActive 
                   ? "bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-400" 
                   : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"
               )}
             >
-              <link.icon className="w-5 h-5 mr-3" />
-              {link.label}
+              <div className="flex items-center">
+                <link.icon className="w-5 h-5 mr-3" />
+                {link.label}
+              </div>
+              {link.badge && newRepaymentCount > 0 && (
+                <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  {newRepaymentCount > 99 ? '99+' : newRepaymentCount}
+                </span>
+              )}
             </NavLink>
           ))}
+        </nav>
 
+        <div className="flex-1 px-4 space-y-1 overflow-y-auto pt-2 no-scrollbar">
           {activeRole === 'ADMIN' && (
             <div className="pt-4 space-y-1">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-3 mb-2">Staff</p>
@@ -252,7 +295,7 @@ const Sidebar = ({ isOpen, onClose }) => {
               </div>
             </div>
           )}
-        </nav>
+        </div>
 
         {/* Help Guide Button */}
         <div className="px-4 pb-2">
