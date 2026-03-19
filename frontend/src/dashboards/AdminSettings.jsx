@@ -25,112 +25,124 @@ import {
   Calendar,
   Clock,
   LogOut,
-  AlertTriangle
+  AlertTriangle,
+  Edit2,
+  X
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 
-const MpesaField = ({ field, currentValue, onSave, onReveal }) => {
+const CredentialField = ({ fieldKey, label, placeholder, sensitive, currentValue, onSave, onReveal }) => {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState('');
+  const [inputValue, setInputValue] = useState('');
   const [revealed, setRevealed] = useState(null);
+  const [showInput, setShowInput] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showValue, setShowValue] = useState(false);
+
+  const isConfigured = !!currentValue && currentValue !== '••••••••';
+
+  const handleSave = async () => {
+    if (!inputValue.trim()) { toast.error('Value cannot be empty'); return; }
+    setLoading(true);
+    try {
+      await onSave(inputValue.trim());
+      setEditing(false);
+      setInputValue('');
+      setRevealed(null);
+    } catch {
+      toast.error('Failed to save — check encryption key');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleRevealClick = async () => {
     if (revealed) { setRevealed(null); return; }
     setLoading(true);
     try {
-      const res = await onReveal(field.key);
-      setRevealed(res.value);
+      const res = await onReveal();
+      setRevealed(res?.value || res);
     } catch {
-      toast.error('Could not reveal value');
+      toast.error('Cannot reveal — permission denied');
     } finally {
       setLoading(false);
     }
   };
-
-  const handleSave = async () => {
-    if (!value.trim()) { toast.error('Value cannot be empty'); return; }
-    setLoading(true);
-    try {
-      await onSave(field.key, value, field.group);
-      toast.success(`${field.label} saved`);
-      setEditing(false);
-      setValue('');
-      setRevealed(null);
-    } catch {
-      toast.error('Failed to save');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const displayValue = revealed || currentValue || '';
-  const maskedValue = displayValue ? (field.sensitive ? '••••••••••••' : displayValue) : 'Not set';
 
   return (
-    <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-      <label className="text-sm font-bold text-slate-700 dark:text-slate-300 block mb-3">
-        {field.label}
-        {!currentValue && <span className="ml-2 text-[10px] font-bold text-red-500 uppercase">Not configured</span>}
-        {currentValue && <span className="ml-2 text-[10px] font-bold text-emerald-500 uppercase">Configured</span>}
-      </label>
-
-      {editing ? (
-        <div className="space-y-2">
-          <div className="relative">
-            <input
-              type={field.sensitive && !showValue ? 'password' : 'text'}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder={field.placeholder}
-              className="w-full px-3 py-2 pr-10 border border-indigo-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-900 dark:border-slate-600"
-              autoFocus
-            />
-            {field.sensitive && (
-              <button
-                type="button"
-                onClick={() => setShowValue(!showValue)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={loading}
-              className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors"
-            >
-              {loading ? 'Saving...' : 'Save'}
-            </button>
-            <button
-              onClick={() => { setEditing(false); setValue(''); }}
-              className="px-3 py-2 border text-xs font-medium rounded-lg hover:bg-slate-50"
-            >
-              Cancel
-            </button>
+    <div className="group relative bg-slate-50 dark:bg-slate-900 shadow-sm hover:shadow-md hover:bg-white dark:hover:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-800 transition-all duration-300">
+      <div className="flex justify-between items-start mb-2">
+        <div className="flex flex-col">
+          <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none mb-1">
+            {label}
+          </label>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${isConfigured ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-300 dark:bg-slate-700'}`} />
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+              {isConfigured ? 'Active' : 'Missing'}
+            </span>
           </div>
         </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <div className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 rounded-lg font-mono text-xs text-slate-600 dark:text-slate-400 truncate">
-            {field.sensitive ? (revealed ? revealed : maskedValue) : displayValue || 'Not set'}
-          </div>
-          {field.sensitive && currentValue && (
-            <button onClick={handleRevealClick} disabled={loading} className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors" title="Reveal">
-              {revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        
+        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {sensitive && isConfigured && (
+            <button
+              onClick={handleRevealClick}
+              disabled={loading}
+              className="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-transparent hover:border-slate-100 dark:hover:border-slate-600 transition-all"
+              title={revealed ? "Hide" : "Reveal"}
+            >
+              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : (revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />)}
             </button>
           )}
           <button
-            onClick={() => { setValue(revealed || ''); setEditing(true); }}
-            className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg transition-colors"
-            title="Edit"
+            onClick={() => { setEditing(!editing); setInputValue(''); }}
+            className={`p-1.5 rounded-lg border border-transparent transition-all ${editing ? 'text-red-500 bg-white dark:bg-slate-700 border-red-100 dark:border-red-900/30' : 'text-slate-400 hover:text-indigo-500 hover:bg-white dark:hover:bg-slate-700 hover:border-slate-100 dark:hover:border-slate-600'}`}
           >
-            <Save className="w-4 h-4" />
+            {editing ? <X className="w-3.5 h-3.5" /> : <Edit2 className="w-3.5 h-3.5" />}
           </button>
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="flex gap-2 mt-1">
+          <div className="relative flex-1">
+            <input
+              type={sensitive && !showInput ? "password" : "text"}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              placeholder={placeholder}
+              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all dark:text-white"
+              autoFocus
+            />
+            {sensitive && (
+              <button 
+                onClick={() => setShowInput(!showInput)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-300 hover:text-slate-500 transition-colors"
+              >
+                {showInput ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={loading || !inputValue}
+            className="bg-slate-900 dark:bg-indigo-600 hover:scale-[1.02] active:scale-[0.98] text-white px-4 py-2 rounded-lg text-xs font-black shadow-lg shadow-slate-900/20 dark:shadow-indigo-500/20 flex items-center gap-2 disabled:opacity-30 transition-all uppercase tracking-tight"
+          >
+            {loading ? <RefreshCw className="w-3 h-3 animate-spin text-white" /> : <Save className="w-3 h-3 text-white" />}
+            Save
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 mt-1">
+          <div className={`flex-1 font-mono text-sm truncate py-1.5 ${revealed ? 'text-indigo-600 dark:text-indigo-400 font-bold' : (isConfigured && sensitive ? 'text-slate-300 dark:text-slate-700 tracking-[0.3em] text-[10px]' : 'text-slate-600 dark:text-slate-300')}`}>
+            {revealed ? revealed : (isConfigured ? (sensitive ? '••••••••••••••••' : currentValue) : <span className="text-slate-300 dark:text-slate-700 italic font-sans text-xs">Unconfigured</span>)}
+          </div>
+          {isConfigured && (
+             <span className="text-[8px] font-black text-slate-300 dark:text-slate-600 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded-md uppercase">
+               Secure
+             </span>
+          )}
         </div>
       )}
     </div>
@@ -229,6 +241,10 @@ const AdminSettings = ({ defaultTab = 'mpesa' }) => {
   const [secureSettings, setSecureSettings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [testLoading, setTestLoading] = useState(false);
+
+  // Derive current values from secureSettings for display
+  const currentEnvironment = secureSettings.find(s => s.key === 'mpesa_environment')?.encrypted_value || 'sandbox';
+  const currentShortcodeType = secureSettings.find(s => s.key === 'mpesa_shortcode_type')?.encrypted_value || 'paybill';
   
   // Maintenance State
   const [maintenanceDate, setMaintenanceDate] = useState('');
@@ -441,139 +457,213 @@ const AdminSettings = ({ defaultTab = 'mpesa' }) => {
           </Card>
 
           {activeTab === 'mpesa' && (
-            <div className="space-y-6">
+            <div className="space-y-5">
 
-              {/* Environment Toggle */}
-              <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between flex-wrap gap-4">
+              {/* ── Environment Toggle ── */}
+              <div className="p-5 bg-white dark:bg-slate-800 rounded-xl border-2 border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h4 className="font-bold text-slate-800 dark:text-white">Environment</h4>
-                    <p className="text-xs text-slate-500 mt-1">Switch between Safaricom Sandbox (testing) and Production (live money)</p>
+                    <h4 className="font-bold text-slate-800 dark:text-white text-sm">Environment</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Current: <span className={`font-bold ${currentEnvironment === 'production' ? 'text-red-600' : 'text-amber-600'}`}>
+                        {currentEnvironment === 'production' ? 'PRODUCTION (Live Money)' : 'SANDBOX (Test Mode)'}
+                      </span>
+                    </p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => handleUpdate('mpesa_environment', 'sandbox', 'mpesa')}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-                        (secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'sandbox' || !secureSettings.find(s => s.key === 'mpesa_environment'))
-                          ? 'bg-amber-500 text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Sandbox
-                    </button>
-                    <button
-                      onClick={() => handleUpdate('mpesa_environment', 'production', 'mpesa')}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-                        secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'production'
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Production
-                    </button>
-                  </div>
+                  {/* Status dot */}
+                  <div className={`w-3 h-3 rounded-full ${currentEnvironment === 'production' ? 'bg-red-500 animate-pulse' : 'bg-amber-400 animate-pulse'}`} />
                 </div>
-                {secureSettings.find(s => s.key === 'mpesa_environment')?.value === 'production' && (
-                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-xs font-bold text-red-700">⚠️ PRODUCTION MODE — Real money transactions are active. Double-check all credentials before disbursing.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={async () => {
+                      await handleUpdate('mpesa_environment', 'sandbox', 'mpesa');
+                      toast.success('Switched to Sandbox mode');
+                    }}
+                    className={`flex-1 group relative overflow-hidden py-4 rounded-xl text-sm font-bold transition-all duration-300 border-2 ${
+                      currentEnvironment === 'sandbox'
+                        ? 'bg-amber-500 border-amber-500 text-white shadow-[0_8px_20px_-6px_rgba(245,158,11,0.5)] scale-[1.02]'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-500/50 hover:bg-amber-50/50 dark:hover:bg-amber-500/5'
+                    }`}
+                  >
+                    <div className="relative z-10 flex flex-col items-center">
+                      <span className="flex items-center gap-2">
+                        {currentEnvironment === 'sandbox' && <div className="w-2 h-2 rounded-full bg-white animate-pulse" />}
+                        Sandbox
+                      </span>
+                      <p className={`text-[10px] font-medium mt-0.5 transition-colors ${currentEnvironment === 'sandbox' ? 'text-amber-100' : 'text-slate-400'}`}>
+                        Safe Development Mode
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm('⚠️ You are switching to PRODUCTION mode. Real money will be used. Are you absolutely sure?')) return;
+                      await handleUpdate('mpesa_environment', 'production', 'mpesa');
+                      toast.success('Switched to Production mode');
+                    }}
+                    className={`flex-1 group relative overflow-hidden py-4 rounded-xl text-sm font-bold transition-all duration-300 border-2 ${
+                      currentEnvironment === 'production'
+                        ? 'bg-red-600 border-red-600 text-white shadow-[0_8px_25px_-6px_rgba(220,38,38,0.5)] scale-[1.02]'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 hover:bg-red-50/50 dark:hover:bg-red-500/5'
+                    }`}
+                  >
+                    <div className="relative z-10 flex flex-col items-center">
+                      <span className="flex items-center gap-2">
+                        {currentEnvironment === 'production' && <div className="w-2 h-2 rounded-full bg-white animate-pulse" />}
+                        Production
+                      </span>
+                      <p className={`text-[10px] font-medium mt-0.5 transition-colors ${currentEnvironment === 'production' ? 'text-red-100' : 'text-slate-400'}`}>
+                        Live Financial Operations
+                      </p>
+                    </div>
+                  </button>
+                </div>
+                {currentEnvironment === 'production' && (
+                  <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded-lg">
+                    <p className="text-xs font-bold text-red-700 dark:text-red-400">
+                      ⚠️ PRODUCTION MODE ACTIVE — Every disbursement sends real money via M-Pesa. Double-check all credentials before disbursing any loan.
+                    </p>
                   </div>
                 )}
               </div>
 
-              {/* Credentials Form */}
+              {/* ── Shortcode Type ── */}
+              <div className="p-5 bg-white dark:bg-slate-800 rounded-xl border-2 border-slate-200 dark:border-slate-700">
+                <div className="mb-4">
+                  <h4 className="font-bold text-slate-800 dark:text-white text-sm">Shortcode Type</h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Current: <span className="font-bold text-indigo-600 capitalize">{currentShortcodeType}</span>
+                    {currentShortcodeType === 'paybill' && ' — Customers enter account reference (National ID). Recommended.'}
+                    {currentShortcodeType === 'till' && ' — Customers send money directly. No account reference.'}
+                  </p>
+                </div>
+                <div className="flex gap-4">
+                  <button
+                    onClick={async () => {
+                      await handleUpdate('mpesa_shortcode_type', 'paybill', 'mpesa');
+                      toast.success('Shortcode type set to Paybill');
+                    }}
+                    className={`flex-1 group relative py-4 rounded-xl text-sm font-bold transition-all duration-300 border-2 ${
+                      currentShortcodeType === 'paybill'
+                        ? 'bg-slate-800 dark:bg-white text-white dark:text-slate-900 border-slate-800 dark:border-white shadow-[0_8px_20px_-6px_rgba(30,41,59,0.4)] scale-[1.01]'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center">
+                      <span>Paybill</span>
+                      <p className={`text-[10px] font-medium mt-0.5 truncate w-full px-2 transition-colors ${currentShortcodeType === 'paybill' ? 'opacity-80' : 'text-slate-400'}`}>
+                        With Account Ref
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await handleUpdate('mpesa_shortcode_type', 'till', 'mpesa');
+                      toast.success('Shortcode type set to Till');
+                    }}
+                    className={`flex-1 group relative py-4 rounded-xl text-sm font-bold transition-all duration-300 border-2 ${
+                      currentShortcodeType === 'till'
+                        ? 'bg-slate-800 dark:bg-white text-white dark:text-slate-900 border-slate-800 dark:border-white shadow-[0_8px_20px_-6px_rgba(30,41,59,0.4)] scale-[1.01]'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center">
+                      <span>Buy Goods (Till)</span>
+                      <p className={`text-[10px] font-medium mt-0.5 truncate w-full px-2 transition-colors ${currentShortcodeType === 'till' ? 'opacity-80' : 'text-slate-400'}`}>
+                        Direct Payment
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Credential Fields ── */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
-                  { key: 'mpesa_consumer_key',      label: 'Consumer Key',          placeholder: 'From Daraja portal',     sensitive: true,  group: 'mpesa' },
-                  { key: 'mpesa_consumer_secret',   label: 'Consumer Secret',       placeholder: 'From Daraja portal',     sensitive: true,  group: 'mpesa' },
-                  { key: 'mpesa_shortcode',         label: 'Paybill / Shortcode',   placeholder: 'e.g. 174379',            sensitive: false, group: 'mpesa' },
-                  { key: 'mpesa_passkey',           label: 'Passkey',               placeholder: 'STK Push passkey',       sensitive: true,  group: 'mpesa' },
-                  { key: 'mpesa_b2c_initiator',     label: 'B2C Initiator Name',    placeholder: 'e.g. testapi',           sensitive: false, group: 'mpesa' },
-                  { key: 'mpesa_b2c_credential',    label: 'B2C Security Credential', placeholder: 'Encrypted credential', sensitive: true,  group: 'mpesa' },
+                  { key: 'mpesa_consumer_key',    label: 'Consumer Key',         placeholder: 'From Daraja portal → My Apps', sensitive: true  },
+                  { key: 'mpesa_consumer_secret', label: 'Consumer Secret',      placeholder: 'From Daraja portal → My Apps', sensitive: true  },
+                  { key: 'mpesa_shortcode',       label: 'Shortcode',            placeholder: 'Sandbox: 174379',              sensitive: false },
+                  { key: 'mpesa_passkey',         label: 'Passkey',              placeholder: 'From Daraja portal',           sensitive: true  },
+                  { key: 'mpesa_b2c_initiator',   label: 'B2C Initiator Name',   placeholder: 'Sandbox: testapi',             sensitive: false },
+                  { key: 'mpesa_b2c_credential',  label: 'B2C Security Credential', placeholder: 'From Daraja portal',        sensitive: true  },
                 ].map(field => (
-                  <MpesaField
+                  <CredentialField
                     key={field.key}
-                    field={field}
+                    fieldKey={field.key}
+                    label={field.label}
+                    placeholder={field.placeholder}
+                    sensitive={field.sensitive}
                     currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
-                    onSave={handleUpdate}
-                    onReveal={handleReveal}
+                    onSave={(val) => handleUpdate(field.key, val, 'mpesa')}
+                    onReveal={() => handleReveal(field.key)}
                   />
                 ))}
 
                 {/* Callback URL — full width */}
                 <div className="md:col-span-2">
-                  <MpesaField
-                    field={{ key: 'mpesa_callback_url', label: 'Callback URL', placeholder: 'https://your-backend.onrender.com/api/payments/callback/', sensitive: false, group: 'mpesa' }}
+                  <CredentialField
+                    fieldKey="mpesa_callback_url"
+                    label="Callback URL"
+                    placeholder="https://your-backend.onrender.com/api/payments/mpesa-callback/"
+                    sensitive={false}
                     currentValue={secureSettings.find(s => s.key === 'mpesa_callback_url')?.encrypted_value || ''}
-                    onSave={handleUpdate}
-                    onReveal={handleReveal}
+                    onSave={(val) => handleUpdate('mpesa_callback_url', val, 'mpesa')}
+                    onReveal={() => handleReveal('mpesa_callback_url')}
                   />
-                </div>
-
-                {/* Shortcode Type */}
-                <div className="md:col-span-2 p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <h4 className="font-bold text-slate-800 dark:text-white mb-2">Shortcode Type</h4>
-                  <div className="flex gap-3">
-                    {['paybill', 'till'].map(type => (
-                      <button
-                        key={type}
-                        onClick={() => handleUpdate('mpesa_shortcode_type', type, 'mpesa')}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold capitalize transition-colors ${
-                          (secureSettings.find(s => s.key === 'mpesa_shortcode_type')?.encrypted_value || 'paybill') === type
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        {type}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-xs text-slate-400 mt-2">Paybill allows customers to enter account reference (National ID). Recommended.</p>
                 </div>
               </div>
 
-              {/* Test Connection */}
+              {/* ── Test Connection ── */}
               <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30 rounded-xl flex items-center justify-between flex-wrap gap-4">
                 <div>
-                  <h4 className="font-bold text-emerald-800 dark:text-emerald-300">Test Connection</h4>
-                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">Verify your credentials work by connecting to Daraja API</p>
+                  <h4 className="font-bold text-emerald-800 dark:text-emerald-300 text-sm">Test Connection</h4>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+                    Calls Safaricom {currentEnvironment} API to verify your credentials work
+                  </p>
                 </div>
                 <Button
                   className="bg-emerald-600 hover:bg-emerald-700"
                   onClick={testMpesa}
                   disabled={testLoading}
                 >
-                  {testLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
-                  Test M-Pesa Connection
+                  {testLoading
+                    ? <><RefreshCw className="w-4 h-4 animate-spin mr-2" />Testing...</>
+                    : <><Activity className="w-4 h-4 mr-2" />Test M-Pesa Connection</>
+                  }
                 </Button>
               </div>
+
             </div>
           )}
 
           {activeTab === 'sms' && (
             <div className="space-y-4">
               {[
-                { key: 'sms_provider',   label: 'SMS Provider',  placeholder: 'e.g. Africa\'s Talking', sensitive: false, group: 'sms' },
-                { key: 'sms_api_key',    label: 'API Key',        placeholder: 'Your SMS provider API key', sensitive: true, group: 'sms' },
-                { key: 'sms_sender_id',  label: 'Sender ID',      placeholder: 'e.g. AZARIAH',           sensitive: false, group: 'sms' },
+                { key: 'sms_provider',  label: 'SMS Provider',  placeholder: "e.g. Africa's Talking or Brevo", sensitive: false },
+                { key: 'sms_api_key',   label: 'API Key',        placeholder: 'Your SMS provider API key',      sensitive: true  },
+                { key: 'sms_sender_id', label: 'Sender ID',      placeholder: 'e.g. AZARIAH',                  sensitive: false },
               ].map(field => (
-                <MpesaField
+                <CredentialField
                   key={field.key}
-                  field={field}
+                  fieldKey={field.key}
+                  label={field.label}
+                  placeholder={field.placeholder}
+                  sensitive={field.sensitive}
                   currentValue={secureSettings.find(s => s.key === field.key)?.encrypted_value || ''}
-                  onSave={handleUpdate}
-                  onReveal={handleReveal}
+                  onSave={(val) => handleUpdate(field.key, val, 'sms')}
+                  onReveal={() => handleReveal(field.key)}
                 />
               ))}
 
               {/* Test SMS */}
               <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 rounded-xl">
-                <h4 className="font-bold text-indigo-800 dark:text-indigo-300 mb-2">Send Test SMS</h4>
+                <h4 className="font-bold text-indigo-800 dark:text-indigo-300 text-sm mb-3">Send Test SMS</h4>
                 <div className="flex gap-3">
                   <input
                     type="text"
-                    placeholder="Phone number e.g. 0712345678"
                     id="test-sms-phone"
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Phone number e.g. 0712345678"
+                    className="flex-1 px-3 py-2 border border-indigo-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-800"
                   />
                   <Button onClick={testSMS} disabled={testLoading}>
                     {testLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Send Test'}
