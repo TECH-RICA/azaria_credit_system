@@ -1,25 +1,12 @@
-                                     Table "public.admins"
-        Column         |            Type             | Collation | Nullable |      Default      
------------------------+-----------------------------+-----------+----------+-------------------
- id                    | uuid                        |           | not null | gen_random_uuid()
- full_name             | text                        |           | not null | 
- email                 | text                        |           | not null | 
- phone                 | character varying(20)       |           |          | 
- role                  | text                        |           | not null | 
- password_hash         | text                        |           | not null | 
- is_verified           | boolean                     |           |          | false
- is_blocked            | boolean                     |           |          | false
- failed_login_attempts | integer                     |           |          | 0
- created_at            | timestamp without time zone |           |          | now()
-Indexes:
-    "admins_pkey" PRIMARY KEY, btree (id)
-    "admins_email_key" UNIQUE CONSTRAINT, btree (email)
-    "idx_admins_email" btree (email)
-    "idx_admins_role" btree (role)
-Check constraints:
-    "admins_role_check" CHECK (role = ANY (ARRAY['super_admin'::text, 'manager'::text, 'field_officer'::text]))
-Referenced by:
-    TABLE "audit_logs" CONSTRAINT "fk_audit_admin" FOREIGN KEY (admin_id) REFERENCES admins(id) ON DELETE SET NULL
-    TABLE "reports" CONSTRAINT "reports_generated_by_id_18d9bf61_fk_admins_id" FOREIGN KEY (generated_by_id) REFERENCES admins(id) DEFERRABLE INITIALLY DEFERRED
-    TABLE "staff_assignments" CONSTRAINT "staff_assignments_staff_id_7432dc25_fk_admins_id" FOREIGN KEY (staff_id) REFERENCES admins(id) DEFERRABLE INITIALLY DEFERRED
+                       conname                        |                                                     pg_get_constraintdef                                                      
+------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------
+ admins_pkey                                          | PRIMARY KEY (id)
+ admins_email_key                                     | UNIQUE (email)
+ admins_phone_b7c0d2af_uniq                           | UNIQUE (phone)
+ admins_branch_fk_id_a5056208_fk_branches_id          | FOREIGN KEY (branch_fk_id) REFERENCES branches(id) DEFERRABLE INITIALLY DEFERRED
+ admins_invited_by_id_7771fe2e_fk_admins_id           | FOREIGN KEY (invited_by_id) REFERENCES admins(id) DEFERRABLE INITIALLY DEFERRED
+ admins_suspended_by_id_6b6ba04f_fk_admins_id         | FOREIGN KEY (suspended_by_id) REFERENCES admins(id) DEFERRABLE INITIALLY DEFERRED
+ admins_ownership_granted_by_id_af5cfc3e_fk_admins_id | FOREIGN KEY (ownership_granted_by_id) REFERENCES admins(id) DEFERRABLE INITIALLY DEFERRED
+ admins_role_check                                    | CHECK ((role = ANY (ARRAY['OWNER'::text, 'ADMIN'::text, 'MANAGER'::text, 'FINANCIAL_OFFICER'::text, 'FIELD_OFFICER'::text])))
+(8 rows)
 

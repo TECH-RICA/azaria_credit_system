@@ -89,8 +89,8 @@ class AdminListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        import uuid
-        queryset = Admins.objects.all().order_by("-created_at")
+        # Exclude standard owners and high-privilege system accounts from general admin lists
+        queryset = Admins.objects.filter(is_owner=False, is_primary_owner=False).order_by("-created_at")
         role = self.request.query_params.get("role")
         if role:
             queryset = queryset.filter(role=role)
