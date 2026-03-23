@@ -1,6 +1,6 @@
 import requests
 import base64
-from datetime import datetime
+from django.utils import timezone
 import json
 import os
 from django.conf import settings
@@ -60,7 +60,7 @@ class MpesaHandler:
         if not access_token:
             return {"error": "Failed to get access token"}
 
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
         password_str = self.shortcode + self.passkey + timestamp
         password = base64.b64encode(password_str.encode()).decode()
 
@@ -119,7 +119,7 @@ class MpesaHandler:
 
         # Generate a unique OriginatorConversationID (Required by Safaricom for tracking)
         originator_id = (
-            f"AZA_{datetime.now().strftime('%Y%m%d%H%M%S')}_{os.urandom(4).hex()}"
+            f"AZA_{timezone.now().strftime('%Y%m%d%H%M%S')}_{os.urandom(4).hex()}"
         )
 
         payload = {
@@ -161,7 +161,7 @@ class MpesaHandler:
     def mock_stk_push(phone_number, amount, account_reference):
         # This is for testing until they get real credentials
         return {
-            "MerchantRequestID": "MOCK-" + datetime.now().strftime("%Y%m%d%H%M%S"),
+            "MerchantRequestID": "MOCK-" + timezone.now().strftime("%Y%m%d%H%M%S"),
             "ResponseCode": "0",
             "CustomerMessage": "Success. Please enter your Mpesa pin on your phone.",
             "status": "MOCK_SUCCESS",

@@ -1,17 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, MapPin, Calendar, FileText } from 'lucide-react';
+import { Search, MapPin, Calendar, FileText, Download } from 'lucide-react';
 import { Card, Table, Input } from '../../components/ui/Shared';
 import { loanService } from '../../api/api';
 import { useRepayments } from '../../hooks/useQueries';
 import toast from 'react-hot-toast';
+import DateRangeFilter from '../../components/ui/DateRangeFilter';
+import ExportButton from '../../components/ui/ExportButton';
+import { useAuth } from '../../context/AuthContext';
 
 const FinanceLedger = () => {
-  const { data: repaymentsData, isLoading: loading } = useRepayments({ page_size: 1000 });
+  const { user } = useAuth();
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  const { data: repaymentsData, isLoading: loading } = useRepayments({ 
+    page_size: 1000,
+    date_from: dateRange.from || undefined,
+    date_to: dateRange.to || undefined
+  });
   const repayments = useMemo(() => repaymentsData?.results || repaymentsData || [], [repaymentsData]);
 
   const [filters, setFilters] = useState({
-    startDate: '',
-    endDate: '',
     branch: 'All Branches'
   });
 
@@ -25,10 +32,7 @@ const FinanceLedger = () => {
     if (!Array.isArray(repayments)) return [];
     return repayments.filter(r => {
       const matchBranch = filters.branch === 'All Branches' || r.branch_name === filters.branch;
-      const rDate = new Date(r.payment_date || r.created_at);
-      const matchStart = !filters.startDate || rDate >= new Date(filters.startDate);
-      const matchEnd = !filters.endDate || rDate <= new Date(filters.endDate + 'T23:59:59');
-      return matchBranch && matchStart && matchEnd;
+      return matchBranch;
     });
   }, [repayments, filters]);
 
@@ -41,32 +45,16 @@ const FinanceLedger = () => {
         <p className="text-sm text-slate-500 mt-1">Full repayment history and reconciliation</p>
       </div>
 
-      <Card className="flex flex-col md:flex-row gap-4 items-end">
-        <div className="flex flex-col gap-1 flex-1">
-          <label className="text-xs font-bold text-slate-400 uppercase">From Date</label>
-          <div className="relative">
-            <Input 
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
-              className="pl-10"
-            />
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1 flex-1">
-          <label className="text-xs font-bold text-slate-400 uppercase">To Date</label>
-          <div className="relative">
-            <Input 
-              type="date"
-              value={filters.endDate}
-              onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
-              className="pl-10"
-            />
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          </div>
-        </div>
+      <Card className="flex flex-col md:flex-row gap-4 items-center">
+        <DateRangeFilter onChange={setDateRange} />
+        
+        {user?.is_owner && (
+          <ExportButton 
+            resource="repayments"
+            dateRange={dateRange}
+            filename={`repayments_export_${new Date().toISOString().split('T')[0]}.csv`}
+          />
+        )}
 
         <div className="flex flex-col gap-1 flex-1">
           <label className="text-xs font-bold text-slate-400 uppercase">Branch</label>

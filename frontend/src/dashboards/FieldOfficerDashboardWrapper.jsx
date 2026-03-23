@@ -20,7 +20,10 @@ const FieldOfficerDashboardWrapper = () => {
     <Layout title={getTitle()}>
       <Routes>
         <Route index element={<FieldOfficerDashboard />} />
-        <Route path="dashboard" element={<FieldOfficerDashboard />} />
+        <Route path="dashboard" element={<FieldOfficerDashboard defaultTab="dashboard" />} />
+        <Route path="verification" element={<FieldOfficerDashboard defaultTab="verification" />} />
+        <Route path="inquiry" element={<FieldOfficerDashboard defaultTab="inquiry" />} />
+        <Route path="portfolio" element={<FieldOfficerDashboard defaultTab="portfolio" />} />
         <Route path="register-customer" element={<FieldOfficerDashboard isRegisteringDefault={true} />} />
         <Route path="apply-loan" element={<FieldOfficerDashboard isApplyingDefault={true} />} />
         <Route path="profile" element={<ProfileSettings />} />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Bell, User, LogOut, Settings, ChevronDown, CheckCheck, Menu } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -17,13 +17,8 @@ const Navbar = ({ title, onMenuClick, isSidebarOpen }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  useEffect(() => {
-    if (user) {
-      fetchNotifications();
-    }
-  }, [user]);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
+    let cancelled = false;
     try {
       const endpoint = user?.is_owner 
         ? '/owner-notifications/' 
@@ -32,21 +27,22 @@ const Navbar = ({ title, onMenuClick, isSidebarOpen }) => {
           : '/notifications/';
       const response = await loanService.api.get(endpoint);
       const data = response.data.results || response.data;
-      setNotifications(Array.isArray(data) ? data : []);
+      if (!cancelled) setNotifications(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error('Error fetching notifications:', err);
-      setNotifications([]);
+      if (!cancelled) {
+        console.error('Error fetching notifications:', err.message);
+        setNotifications([]);
+      }
     }
-  };
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   useEffect(() => {
-    let interval;
-    if (user) {
-      fetchNotifications();
-      interval = setInterval(fetchNotifications, 30000); // Poll every 30s
-    }
+    if (!user?.id) return;
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user?.id, fetchNotifications]);
 
   const markAsRead = async (id) => {
     try {

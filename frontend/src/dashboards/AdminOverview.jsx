@@ -31,21 +31,36 @@ import {
   Lock,
   Eye,
   PieChart,
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 
 const AdminOverview = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, godModeActing } = useAuth();
   const isPrivileged = user?.is_owner || user?.is_super_admin;
   
-  const { data: loansData, isLoading: loansLoading } = useLoans({ page_size: 5000 });
-  const { data: repaymentsData, isLoading: repaymentsLoading } = useRepayments({ page_size: 5000 });
-  const { data: customersData, isLoading: customersLoading } = useCustomers({ page_size: 5000 });
+  const { data: loansData, isLoading: loansLoading } = useLoans({ page_size: 100 });
+  const { data: repaymentsData, isLoading: repaymentsLoading } = useRepayments({ page_size: 100 });
+  const { data: customersData, isLoading: customersLoading } = useCustomers({ page_size: 100 });
   const { data: securityData, isLoading: securityLoading } = useSecurityLogs({ 
     limit: 10,
     enabled: !!isPrivileged
   });
   const { data: auditData, isLoading: auditLoading } = useAuditLogs({ limit: 10 });
+
+  const loansList = useMemo(() => loansData?.results || loansData || [], [loansData]);
+
+  const actionsNeeded = useMemo(() => {
+    const now = new Date();
+    return {
+      loansStuck: loansList.filter(l =>
+        (l.status === 'UNVERIFIED' || l.status === 'PENDING') &&
+        (now - new Date(l.created_at)) > 48 * 60 * 60 * 1000
+      ).length,
+      overdueCount: loansList.filter(l => l.status === 'OVERDUE').length,
+    };
+  }, [loansList]);
 
   const stats = useMemo(() => {
     const parseAmount = (val) => {
@@ -53,7 +68,7 @@ const AdminOverview = () => {
       return Number.isFinite(num) ? num : 0;
     };
 
-    const loans = loansData?.results || loansData || [];
+    const loans = loansList;
     const repayments = repaymentsData?.results || repaymentsData || [];
     const customers = customersData?.results || customersData || [];
 
@@ -79,7 +94,7 @@ const AdminOverview = () => {
       overdue90: 0,
       actionsNeeded: loans.filter(l => l.status === 'PENDING' || l.status === 'UNVERIFIED').length
     };
-  }, [loansData, repaymentsData, customersData]);
+  }, [loansList, repaymentsData, customersData]);
 
   const statusBreakdown = useMemo(() => {
     const loans = loansData?.results || loansData || [];
@@ -151,35 +166,77 @@ const AdminOverview = () => {
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
           <StatCard 
-            label="Total Portfolio" 
-            value={`KES ${stats.totalLoans.toLocaleString()}`} 
-            icon={Wallet} 
-            trend={{ value: 'All Time', isPositive: true }}
+            label="Total Loans" 
+            value={stats.totalLoans.toLocaleString()} 
+            icon={TrendingUp} 
+            variant="info"
             onClick={() => navigate('/admin/loans')}
           />
           <StatCard 
-            label="Total Collected" 
+            label="Total Disbursed" 
             value={`KES ${stats.totalPaid.toLocaleString()}`} 
-            icon={CheckCircle} 
-            trend={{ value: `${stats.repaymentRate}% rate`, isPositive: true }}
+            icon={Wallet} 
+            trend={{ value: `${stats.repaymentRate.toFixed(1)}% recovery`, isPositive: true }}
             onClick={() => navigate('/admin/loans')}
           />
           <StatCard 
             label="Principal at Risk" 
             value={`KES ${stats.outstanding.toLocaleString()}`} 
             icon={AlertCircle} 
+            variant="danger"
             trend={{ value: 'Outstanding', isPositive: false }}
             onClick={() => navigate('/admin/loans')}
           />
           <StatCard 
-            label="System Users" 
+            label="Active Customers" 
             value={stats.totalCustomers.toString()} 
             icon={Users} 
-            trend={{ value: 'Customers', isPositive: true }}
+            trend={{ value: 'In System', isPositive: true }}
             onClick={() => navigate('/admin/customers')}
           />
         </div>
       )}
+
+      {/* Actions Needed Section */}
+      <div className="space-y-4">
+        {(actionsNeeded.loansStuck > 0 || actionsNeeded.overdueCount > 0) ? (
+          <div className="flex flex-wrap gap-4">
+            {actionsNeeded.loansStuck > 0 && (
+              <div 
+                className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:bg-amber-100 transition-colors"
+                onClick={() => navigate('/admin/loans')}
+              >
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-amber-700">{actionsNeeded.loansStuck}</p>
+                  <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Loans Stuck {'>'}48hrs</p>
+                </div>
+              </div>
+            )}
+            {actionsNeeded.overdueCount > 0 && (
+              <div 
+                className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:bg-amber-100 transition-colors"
+                onClick={() => navigate('/admin/loans')}
+              >
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-black text-amber-700">{actionsNeeded.overdueCount}</p>
+                  <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Overdue Loans</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : !statsLoading && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3 text-emerald-700 font-bold text-sm">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            ✓ All workflows running smoothly
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <Card className="xl:col-span-2 p-8">
@@ -248,6 +305,54 @@ const AdminOverview = () => {
           </div>
         </Card>
       </div>
+
+      {/* Recent Workflow Activity Section */}
+      <Card className="p-8">
+        <h3 className="text-lg font-black text-slate-900 dark:text-white mb-6 flex items-center gap-2 uppercase tracking-widest text-xs">
+          <History className="w-5 h-5 text-indigo-600" />
+          Recent Workflow Activity
+        </h3>
+        
+        {auditLoading ? (
+          <div className="space-y-4">
+            {[1,2,3].map(i => <div key={i} className="h-12 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-xl" />)}
+          </div>
+        ) : auditLogs.length > 0 ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {auditLogs.slice(0, 5).map((log, idx) => (
+              <div key={idx} className="py-4 flex items-center justify-between group">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800 group-hover:bg-primary-50 dark:group-hover:bg-primary-900/10 transition-colors">
+                    <Activity className="w-4 h-4 text-slate-400 group-hover:text-primary-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{log.action?.replace(/_/g, ' ')}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{log.admin_name || log.admin || 'System'}</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black text-slate-400 opacity-60">
+                  {new Date(log.created_at).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-12 text-center text-slate-400">
+            <History className="w-12 h-12 mx-auto opacity-10 mb-2" />
+            <p className="text-xs font-bold uppercase tracking-widest">No activity found</p>
+          </div>
+        )}
+        
+        <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
+          <Button 
+            variant="ghost" 
+            className="w-full text-xs font-black uppercase tracking-widest"
+            onClick={() => navigate('/admin/audit')}
+          >
+            View Full Audit Trail
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 };

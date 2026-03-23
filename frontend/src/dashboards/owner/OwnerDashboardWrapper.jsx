@@ -3,6 +3,10 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import OwnerLayout from './OwnerLayout';
 import OwnerHome from './OwnerHome';
 import OwnerAuditPage from './OwnerAuditPage';
+import OwnerRepayments from './OwnerRepayments';
+import OwnerOverduePage from './OwnerOverduePage';
+import OwnerStaffPage from './OwnerStaffPage';
+import OwnerAnalyticsPage from './OwnerAnalyticsPage';
 import SecurityLogsPage from './SecurityLogsPage';
 import SecurityThreatsPage from '../SecurityThreatsPage';
 import OwnershipPage from './OwnershipPage';
@@ -27,6 +31,10 @@ const OwnerDashboardWrapper = () => {
         {/* Core owner pages */}
         <Route index element={<OwnerHome />} />
         <Route path="dashboard" element={<OwnerHome />} />
+        <Route path="analytics" element={<OwnerAnalyticsPage />} />
+        <Route path="repayments" element={<OwnerRepayments />} />
+        <Route path="overdue" element={<OwnerOverduePage />} />
+        <Route path="staff-performance" element={<OwnerStaffPage />} />
         <Route path="audit" element={<OwnerAuditPage />} />
         <Route path="security-threats" element={<SecurityThreatsPage />} />
         <Route path="security-logs" element={<SecurityLogsPage />} />

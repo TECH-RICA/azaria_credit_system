@@ -12,6 +12,7 @@ import {
   Users2,
   MessageSquare,
   ChevronDown, Send, BarChart3,
+  Search,
   ShieldAlert,
   ShieldCheck,
   Zap,
@@ -39,14 +40,24 @@ import {
   financeOfficerGuide, adminGuide 
 } from '../../data/guideContent';
 import { HelpCircle } from 'lucide-react';
+import BranchSelectorModal from '../ui/BranchSelectorModal';
 
 function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
 const Sidebar = ({ isOpen, onClose }) => {
-  const { user, logout, activeRole, switchActiveRole } = useAuth();
+  const { user, logout, activeRole, switchActiveRole, activateActMode } = useAuth();
   const navigate = useNavigate();
+  const [branches, setBranches] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [targetRole, setTargetRole] = useState('');
+
+  useEffect(() => {
+    if (user?.god_mode_enabled) {
+      loanService.api.get('/branches/').then(res => setBranches(res.data.results || res.data));
+    }
+  }, [user]);
 
   const { threatCount, newRepaymentCount } = useBackgroundPolling(user, activeRole);
   const lastRepaymentCheck = useRef(localStorage.getItem('last_repayment_check') || new Date().toISOString());
@@ -62,7 +73,7 @@ const Sidebar = ({ isOpen, onClose }) => {
   const currentGuide = getGuide();
   const { isOpen: guideOpen, openGuide, closeGuide } = useHelpGuide(activeRole || 'admin');
 
-  const handleRoleSwitch = (role) => {
+  const handleViewSwitch = (role) => {
     switchActiveRole(role);
     if (role === 'SUPER_ADMIN') navigate('/admin/dashboard');
     else if (role === 'ADMIN') navigate('/admin/dashboard');
@@ -71,6 +82,28 @@ const Sidebar = ({ isOpen, onClose }) => {
     else if (role === 'FIELD_OFFICER') navigate('/field/dashboard');
     
     if (window.innerWidth < 1024) onClose();
+  };
+
+  const handleActSwitch = (role) => {
+    if (!role) return;
+    
+    setTargetRole(role);
+    setIsModalOpen(true);
+  };
+
+  const handleBranchSelect = (branch) => {
+    switchActiveRole(targetRole, { branch_fk: branch.id, branch: branch.name });
+    activateActMode(); // Automatically enable "Acting" mode when branch is selected
+    navigateBasedOnRole(targetRole);
+    setIsModalOpen(false);
+    if (window.innerWidth < 1024) onClose();
+  };
+
+  const navigateBasedOnRole = (role) => {
+    if (role === 'ADMIN') navigate('/admin/dashboard');
+    else if (role === 'MANAGER') navigate('/manager/dashboard');
+    else if (role === 'FINANCIAL_OFFICER') navigate('/finance/overview');
+    else if (role === 'FIELD_OFFICER') navigate('/field/dashboard');
   };
 
   const isOwner = user?.is_owner || user?.role === 'OWNER';
@@ -110,6 +143,9 @@ const Sidebar = ({ isOpen, onClose }) => {
 
   const fieldLinks = [
     { to: '/field/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/field/verification', icon: ClipboardList, label: 'Verification Queue' },
+    { to: '/field/inquiry', icon: Search, label: 'Customer Inquiry' },
+    { to: '/field/portfolio', icon: Wallet, label: 'My Portfolio' },
   ];
 
   const getActiveLinks = () => {
@@ -149,39 +185,71 @@ const Sidebar = ({ isOpen, onClose }) => {
             </button>
           </div>
 
-          {/* Role Switcher - ONLY FOR ADMINS with God Mode */}
-          {(user?.god_mode_enabled || user?.is_owner) && (
+          {/* Role Switcher - ONLY FOR OWNERS with God Mode */}
+          {user?.is_owner && user?.god_mode_enabled && (
             <div className="mt-2 space-y-1">
-              {user?.god_mode_enabled && (
-                <div className="mx-0 mb-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
-                  <Zap className="w-3 h-3 text-amber-500" />
-                  <span className="text-xs font-bold text-amber-600">
-                    {user?.is_owner ? '👑 Owner' : '⚡ God Mode'}
-                  </span>
-                </div>
-              )}
+              <div className="mx-0 mb-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+                <Zap className="w-3 h-3 text-amber-500" />
+                <span className="text-xs font-bold text-amber-600">
+                  {user?.is_primary_owner ? "👑 Primary Owner" : "👑 Owner"}
+                </span>
+              </div>
+              
               <div className="flex items-center justify-between px-2 mb-1">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Privileged Access</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  Privileged Access
+                </p>
                 <span className="bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse flex items-center gap-1 border border-amber-200 dark:border-amber-800">
                   <Zap className="w-2.5 h-2.5 fill-current" />
                   GOD MODE
                 </span>
               </div>
-              <div className="relative group">
-                <select 
-                  value={activeRole}
-                  onChange={(e) => handleRoleSwitch(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-xs font-bold appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500/50 shadow-lg shadow-primary-500/20"
-                >
-                  <option value="ADMIN">God Mode: Admin</option>
-                  <option value="SUPER_ADMIN">View: Super Admin</option>
-                  <option value="MANAGER">View: Branch Manager</option>
-                  <option value="FINANCIAL_OFFICER">View: Finance Officer</option>
-                  <option value="FIELD_OFFICER">View: Field Officer</option>
-                  {isOwner && <option value="OWNER">View: Owner Panel</option>}
-                </select>
-                <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary-200" />
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-primary-200 pointer-events-none" />
+              
+              <div className="space-y-4 pt-1">
+                {/* View Mode */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 px-2">
+                    <BarChart3 className="w-3 h-3 text-slate-400" />
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">View Mode</span>
+                  </div>
+                  <div className="relative group px-1">
+                    <select
+                      value={activeRole}
+                      onChange={(e) => handleViewSwitch(e.target.value)}
+                      className="w-full pl-3 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-[11px] font-bold appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary-500/50"
+                    >
+                      <option value="ADMIN">Admin Dashboard</option>
+                      <option value="SUPER_ADMIN">Super Admin Dashboard</option>
+                      <option value="MANAGER">Manager Dashboard</option>
+                      <option value="FINANCIAL_OFFICER">Finance Officer Dashboard</option>
+                      <option value="FIELD_OFFICER">Field Officer Dashboard</option>
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+
+                {/* Act As Mode */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 px-2">
+                    <Users2 className="w-3 h-3 text-primary-500" />
+                    <span className="text-[10px] font-bold text-primary-600 uppercase">Act As (Masked)</span>
+                  </div>
+
+                  <div className="relative group px-1">
+                    <select
+                      onChange={(e) => handleActSwitch(e.target.value)}
+                      className="w-full pl-3 pr-4 py-2 bg-primary-600 dark:bg-primary-700 text-white rounded-lg text-[11px] font-bold appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500/20 shadow-sm border-none transition-all hover:bg-primary-700"
+                    >
+                      <option value="">Choose role...</option>
+                      <option value="ADMIN">Admin Dashboard</option>
+                      <option value="MANAGER">Manager Dashboard</option>
+                      <option value="FINANCIAL_OFFICER">Finance Officer Dashboard</option>
+                      <option value="FIELD_OFFICER">Field Officer Dashboard</option>
+                    </select>
+                    <ShieldCheck className="absolute right-8 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-primary-200" />
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-3 h-3 text-primary-100 pointer-events-none" />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -235,7 +303,7 @@ const Sidebar = ({ isOpen, onClose }) => {
                 links={[
                   { to: '/admin/field-officers', label: 'Field Officers', icon: Users2 },
                   { to: '/admin/managers', label: 'Managers', icon: Building2 },
-                  { to: '/admin/finance-officers', label: 'Finance Officers', icon: Briefcase },
+                  ...((isOwner || isSuperAdmin) ? [{ to: '/admin/finance-officers', label: 'Finance Officers', icon: Briefcase }] : []),
                   ...((isOwner || isSuperAdmin) ? [{ to: '/admin/accounts', label: 'Admins', icon: ShieldCheck }] : []),
                   ...(isOwner ? [{ to: '/admin/super-admins', label: 'Super Admins', icon: ShieldCheck }] : []),
                 ]}
@@ -263,9 +331,11 @@ const Sidebar = ({ isOpen, onClose }) => {
                   setSidebarOpen={(val) => { if (!val && window.innerWidth < 1024) onClose(); }}
                   activeClass="bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-400 font-bold"
                   links={[
-                    { to: '/admin/security-logs', icon: ShieldAlert, label: 'Security Logs' },
+                    ...((isOwner || isSuperAdmin) ? [
+                      { to: '/admin/security-logs', icon: ShieldAlert, label: 'Security Logs' }
+                    ] : []),
                     ...((isOwner || isSuperAdmin) ? [{ to: '/admin/security-threats', icon: ShieldAlert, label: 'Security Threats', threatBadge: true }] : []),
-                    ...(isOwner ? [{ to: '/admin/owner-audit', icon: Crown, label: 'Owner Audit' }] : []),
+                    ...((isOwner || isSuperAdmin) ? [{ to: '/admin/owner-audit', icon: Crown, label: 'Owner Audit' }] : []),
                     { to: '/admin/audit', icon: ClipboardList, label: 'Audit Logs' },
                     { to: '/admin/deactivations', icon: Lock, label: 'Security Requests' },
                   ]}
@@ -337,6 +407,14 @@ const Sidebar = ({ isOpen, onClose }) => {
         title={currentGuide.title}
         sections={currentGuide.sections}
         role={currentGuide.role}
+      />
+
+      <BranchSelectorModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        branches={branches}
+        role={targetRole}
+        onSelect={handleBranchSelect}
       />
     </>
   );

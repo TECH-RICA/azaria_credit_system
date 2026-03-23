@@ -1,20 +1,48 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { loanService } from '../api/api';
-import { useAuditLogs, useFinancialAnalytics } from '../hooks/useQueries';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
+import { useFinancialAnalytics } from '../hooks/useQueries';
 import { Card, Table, Button } from '../components/ui/Shared';
-import { History, Search, Filter, TrendingUp } from 'lucide-react';
+import { History, Search, Filter, TrendingUp, Download } from 'lucide-react';
 import { clsx } from 'clsx';
+import DateRangeFilter from '../components/ui/DateRangeFilter';
+import ExportButton from '../components/ui/ExportButton';
+import { useAuth } from '../context/AuthContext';
 
 const AdminAuditLogs = () => {
+  const { user } = useAuth();
   const [filterType, setFilterType] = useState('');
-  const [page, setPage] = useState(1);
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
 
-  const { data: auditData, isLoading: auditLoading } = useAuditLogs({ page, page_size: 10, type: filterType || undefined });
+  const { 
+    allResults: logs, 
+    isLoading: auditLoading, 
+    isFetching,
+    error, 
+    hasMore, 
+    canShowLess,
+    showMore: fetchNext, 
+    showLess,
+    reset,
+    totalCount 
+  } = usePaginatedQuery({
+    queryKey: ['audit-logs', { type: filterType, date_from: dateRange.from, date_to: dateRange.to }],
+    queryFn: (params) => loanService.getAuditLogs({ 
+      ...params, 
+      type: filterType || undefined,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined
+    })
+  });
+
+  useEffect(() => {
+    reset();
+  }, [filterType, dateRange.from, dateRange.to]);
+
   const { data: analyticsData, isLoading: analyticsLoading } = useFinancialAnalytics();
 
-  const logs = useMemo(() => auditData?.results || auditData || [], [auditData]);
   const dailyAudit = useMemo(() => analyticsData?.daily_disbursements || [], [analyticsData]);
-  const hasMore = !!auditData?.next;
   const loading = (auditLoading && logs.length === 0) || (analyticsLoading && dailyAudit.length === 0);
 
   if (loading) return (
@@ -80,10 +108,18 @@ const AdminAuditLogs = () => {
             </h3>
             <p className="text-sm text-slate-500">Search and filter every transaction and security event.</p>
           </div>
-          <div className="flex gap-4 w-full md:w-auto">
+          <div className="flex flex-wrap gap-4 w-full md:w-auto">
+             <DateRangeFilter onChange={setDateRange} />
+             {user?.is_owner && (
+               <ExportButton 
+                 resource="logs"
+                 dateRange={dateRange}
+                 filename={`audit_logs_export_${new Date().toISOString().split('T')[0]}.csv`}
+               />
+             )}
              <div className="relative flex-1 md:flex-none">
                 <select 
-                  className="pl-4 pr-10 py-2 border dark:border-slate-700 rounded-lg text-sm w-full md:w-48 bg-white dark:bg-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 appearance-none"
+                  className="pl-4 pr-10 py-2 border dark:border-slate-700 rounded-lg text-sm w-full bg-white dark:bg-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 appearance-none"
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
                 >
@@ -109,6 +145,7 @@ const AdminAuditLogs = () => {
           headers={['Timestamp', 'Category', 'Action', 'Entity', 'Details']}
           data={logs}
           maxHeight="max-h-[500px]"
+          disableLocalPagination={true}
           renderRow={(log) => (
             <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
               <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
@@ -156,23 +193,15 @@ const AdminAuditLogs = () => {
             </tr>
           )}
         />
-        
-        {hasMore && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-center mt-4">
-            <Button 
-              variant="secondary" 
-              onClick={() => {
-                const nextPage = page + 1;
-                setPage(nextPage);
-                fetchData(nextPage);
-              }}
-              disabled={loading}
-              className="px-8 font-black uppercase tracking-widest text-xs"
-            >
-              {loading ? 'Processing...' : 'Load More Logs'}
-            </Button>
-          </div>
-        )}
+        <PaginationFooter
+          currentCount={logs.length}
+          hasMore={hasMore}
+          canShowLess={canShowLess}
+          isLoading={isFetching}
+          onShowMore={fetchNext}
+          onShowLess={showLess}
+          totalCount={totalCount}
+        />
       </Card>
     </div>
   );

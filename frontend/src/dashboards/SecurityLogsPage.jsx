@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { ShieldAlert, Server, Globe, User, Clock, Search, Filter, Mail, ChevronDown, ChevronUp } from 'lucide-react';
+import { ShieldAlert, Server, Globe, User, Clock, Search, Filter, Mail, ChevronDown, ChevronUp, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import { loanService } from '../api/api';
 import { useSecurityLogs } from '../hooks/useQueries';
 import { Button } from '../components/ui/Shared';
+import DateRangeFilter from '../components/ui/DateRangeFilter';
+import ExportButton from '../components/ui/ExportButton';
 
 const SecurityLogsPage = () => {
   const { user } = useAuth();
@@ -14,8 +16,7 @@ const SecurityLogsPage = () => {
   const [filter, setFilter] = useState('ALL');
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [emailSearch, setEmailSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [displayCount, setDisplayCount] = useState(10);
 
   const { data: logsData, isLoading: loading } = useSecurityLogs();
@@ -48,11 +49,11 @@ const SecurityLogsPage = () => {
     if (roleFilter !== 'ALL') result = result.filter(log => log.admin_role === roleFilter);
 
     // 4. Date range
-    if (dateFrom) result = result.filter(log => new Date(log.created_at) >= new Date(dateFrom));
-    if (dateTo) result = result.filter(log => new Date(log.created_at) <= new Date(dateTo + 'T23:59:59'));
+    if (dateRange.from) result = result.filter(log => new Date(log.created_at) >= new Date(dateRange.from));
+    if (dateRange.to) result = result.filter(log => new Date(log.created_at) <= new Date(dateRange.to + 'T23:59:59'));
 
     return result;
-  }, [logs, search, emailSearch, filter, roleFilter, dateFrom, dateTo]);
+  }, [logs, search, emailSearch, filter, roleFilter, dateRange]);
 
   const visibleLogs = processedLogs.slice(0, displayCount);
   const hasMore = processedLogs.length > displayCount;
@@ -93,18 +94,15 @@ const SecurityLogsPage = () => {
             </div>
 
             <div className="flex items-center gap-2">
-                <input 
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs font-black py-2 focus:ring-2 focus:ring-primary-500 transition-all text-slate-700 dark:text-slate-200"
-                />
-                <input 
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs font-black py-2 focus:ring-2 focus:ring-primary-500 transition-all text-slate-700 dark:text-slate-200"
-                />
+                <DateRangeFilter onChange={setDateRange} />
+                
+                {user?.is_owner && (
+                  <ExportButton 
+                    resource="logs"
+                    dateRange={dateRange}
+                    filename={`security_audit_export_${new Date().toISOString().split('T')[0]}.csv`}
+                  />
+                )}
             </div>
 
             <div className="flex items-center gap-2">

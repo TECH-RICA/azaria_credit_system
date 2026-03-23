@@ -24,6 +24,59 @@ from ..utils.sms import send_sms_async
 from ..permissions import IsAdminUser, IsOwnerOrCoOwner
 import threading
 
+class SystemHealthView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.db import connection
+        
+        # 1. Database Check
+        try:
+            connection.ensure_connection()
+            db_status = 'Connected'
+        except Exception:
+            db_status = 'Unreachable'
+
+        # 2. SMS Gateway Check
+        # We check if there are any successful SMS logs in the last 24 hours
+        # as a proxy for provider availability
+        last_24h = timezone.now() - timezone.timedelta(hours=24)
+        has_recent_sms = SMSLog.objects.filter(
+            created_at__gte=last_24h, 
+            status='SENT'
+        ).exists()
+        
+        # Also check if API keys are actually configured in SecureSettings
+        sms_api_key = SecureSettings.objects.filter(key='AFRICASTALKING_API_KEY').first()
+        if not sms_api_key or not sms_api_key.encrypted_value:
+            sms_status = 'Not Configured'
+        else:
+            sms_status = 'Active' if has_recent_sms else 'Idle (Linked)'
+
+        # 3. M-PESA Gateway Check (Proxy)
+        # Check for any successful M-PESA transactions in the last 48 hours
+        # This is a safe way to show 'Active' only if it's actually working
+        from ..models import MpesaPayments
+        has_recent_payments = MpesaPayments.objects.filter(
+            created_at__gte=timezone.now() - timezone.timedelta(days=2),
+            status='COMPLETED'
+        ).exists()
+        
+        # Check for M-PESA settings
+        mpesa_shortcode = SecureSettings.objects.filter(key='MPESA_SHORTCODE').first()
+        if not mpesa_shortcode or not mpesa_shortcode.encrypted_value:
+            mpesa_status = 'Not Set'
+        else:
+            mpesa_status = 'Active' if has_recent_payments else 'Idle (Linked)'
+
+        return Response({
+            'database': db_status,
+            'api': 'Operational',
+            'sms_provider': sms_status,
+            'payment_gateway': mpesa_status,
+            'timestamp': timezone.now().isoformat()
+        })
+
 class SecurityThreatsView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -177,7 +230,6 @@ class TestSMSSendView(views.APIView):
         if not phone: return Response({"error": "Phone number is required"}, status=400)
         try:
             send_sms_async(phone, message)
-            log_action(request.user, f"Sent test SMS to {phone}", "sms_logs", None, log_type="MANAGEMENT", ip_address=get_client_ip(request))
             return Response({"status": "success", "message": f"Test SMS queued for {phone}"})
         except Exception as e: return Response({"status": "error", "message": str(e)}, status=500)
 
@@ -284,31 +336,97 @@ class SystemCapitalBalanceView(views.APIView):
         })
 
 class AuditLogListView(generics.ListAPIView):
+    """
+    Tiered Audit Access:
+    - Super Admins/Owners: All logs.
+    - Admins: Logs for everyone below them (including managed branches).
+    - Managers: Only logs for staff in their branch.
+    """
     serializer_class = AuditLogSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if not user or not hasattr(user, "role"): return AuditLogs.objects.none()
-        if user.role in ["FINANCIAL_OFFICER", "SUPER_ADMIN", "ADMIN"]: queryset = AuditLogs.objects.all().order_by("-created_at")
+        if not user or not hasattr(user, "role"): 
+            return AuditLogs.objects.none()
+            
+        # 1. Super Admin and Owners see everything
+        if user.is_super_admin or getattr(user, "is_owner", False):
+            queryset = AuditLogs.objects.all()
+        # 2. Admins see logs for users they invited or themselves
+        elif user.role == "ADMIN":
+            invited_ids = list(Admins.objects.filter(invited_by=user).values_list('id', flat=True))
+            queryset = AuditLogs.objects.filter(
+                models.Q(admin=user) | models.Q(admin_id__in=invited_ids)
+            )
+        # 3. Managers see logs for their branch only
+        elif user.role == "MANAGER" and user.branch_fk:
+            queryset = AuditLogs.objects.filter(admin__branch_fk=user.branch_fk)
+        # 4. Others see only their own logs
         else:
-            if user.branch_fk: queryset = AuditLogs.objects.filter(admin__branch_fk=user.branch_fk).order_by("-created_at")
-            else: return AuditLogs.objects.none()
+            queryset = AuditLogs.objects.filter(admin=user)
+
+        queryset = queryset.order_by("-created_at")
+
+        # Filters
         log_type = self.request.query_params.get("type")
-        if log_type: queryset = queryset.filter(log_type=log_type)
+        if log_type: 
+            queryset = queryset.filter(log_type=log_type)
+            
         limit = self.request.query_params.get("limit")
         if limit:
             try: queryset = queryset[: int(limit)]
             except: pass
+            
         return queryset
+
+class HierarchicalSecurityAlertsView(views.APIView):
+    """
+    Returns security alerts based on the viewer's organizational level.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # Define threat patterns
+        threat_keywords = [
+            'failed login', 'lockout', 'blocked user', 'unauthorized', 
+            'security threat', 'mismatch', 'invalid credentials'
+        ]
+        
+        q_filter = models.Q(log_type="SECURITY")
+        keyword_q = models.Q()
+        for kw in threat_keywords:
+            keyword_q |= models.Q(action__icontains=kw)
+        q_filter &= keyword_q
+
+        # Hierarchical Filtering
+        if user.is_super_admin or getattr(user, "is_owner", False):
+            # Network visibility
+            alerts = AuditLogs.objects.filter(q_filter)
+        elif user.role == "ADMIN":
+            # Department/Sub-branch visibility (users they invited)
+            invited_ids = list(Admins.objects.filter(invited_by=user).values_list('id', flat=True))
+            alerts = AuditLogs.objects.filter(q_filter).filter(
+                models.Q(admin=user) | models.Q(admin_id__in=invited_ids)
+            )
+        elif user.role == "MANAGER" and user.branch_fk:
+            # Branch-only visibility
+            alerts = AuditLogs.objects.filter(q_filter).filter(admin__branch_fk=user.branch_fk)
+        else:
+            # Personal alerts only
+            alerts = AuditLogs.objects.filter(q_filter).filter(admin=user)
+
+        alerts = alerts.order_by("-created_at")[:15]
+        serializer = AuditLogSerializer(alerts, many=True)
+        return Response(serializer.data)
 
 class SecurityLogsView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         if not (request.user.is_owner or request.user.is_super_admin): return Response({"error": "Unauthorized access to security logs."}, status=403)
-        if request.user.is_super_admin and not request.user.is_owner:
-            AuditLogs.objects.create(admin=request.user, action=f"Super Admin {request.user.full_name} viewed security logs", log_type="SECURITY", table_name="audit_logs", is_owner_log=True, ip_address=get_client_ip(request))
         logs = AuditLogs.objects.filter(log_type="SECURITY").order_by("-created_at")
         serializer = AuditLogSerializer(logs, many=True)
         return Response(serializer.data)
@@ -442,3 +560,80 @@ class SendEmailNotificationView(views.APIView):
             threading.Thread(target=send_email_async, args=(admin, subject, message, from_email, sender_name, brevo_api_key, request.user)).start()
 
         return Response({"message": f"Successfully queued {targets.count()} emails."})
+
+import csv
+from django.http import HttpResponse
+import json
+
+class OwnerExportView(views.APIView):
+    """
+    Centralized export view for Owners to download system data.
+    Supports: loans, customers, repayments, audit_logs, security_logs.
+    Formats: csv (default).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrCoOwner]
+
+    def get(self, request):
+        resource = request.query_params.get('resource', 'loans')
+        format_type = request.query_params.get('format', 'csv')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        # Logic for date filtering
+        filters = {}
+        if date_from:
+            filters['created_at__gte'] = date_from
+        if date_to:
+            filters['created_at__lte'] = f"{date_to} 23:59:59"
+
+        if resource == 'loans':
+            queryset = Loans.objects.filter(**filters).order_by('-created_at')
+            filename = f"loans_export_{timezone.now().strftime('%Y%m%d')}.csv"
+            headers = ['ID', 'Customer', 'Amount', 'Status', 'Product', 'Created At']
+            data_rows = [[l.id, l.user.full_name, l.principal_amount, l.status, l.loan_product.name, l.created_at] for l in queryset]
+
+        elif resource == 'customers':
+            queryset = Users.objects.filter(**filters).order_by('-created_at')
+            filename = f"customers_export_{timezone.now().strftime('%Y%m%d')}.csv"
+            headers = ['ID', 'Full Name', 'Phone', 'National ID', 'Created At']
+            data_rows = [[u.id, u.full_name, u.phone, getattr(u.profile, 'national_id', 'N/A'), u.created_at] for u in queryset]
+
+        elif resource == 'repayments':
+            from ..models import PaybillTransaction
+            queryset = PaybillTransaction.objects.filter(**filters).order_by('-created_at')
+            filename = f"repayments_export_{timezone.now().strftime('%Y%m%d')}.csv"
+            headers = ['ID', 'Reference', 'Phone', 'Amount', 'Status', 'Date']
+            data_rows = [[r.id, r.receipt_number, r.sender_phone, r.amount, r.status, r.created_at] for r in queryset]
+
+        elif resource == 'audit_logs':
+            queryset = AuditLogs.objects.filter(**filters).order_by('-created_at')
+            filename = f"audit_logs_export_{timezone.now().strftime('%Y%m%d')}.csv"
+            headers = ['ID', 'User', 'Action', 'IP Address', 'Timestamp']
+            data_rows = [[log.id, log.admin.full_name if log.admin else 'System', log.action, log.ip_address, log.created_at] for log in queryset]
+
+        elif resource == 'security_logs':
+            # Detailed security logs for exports
+            queryset = AuditLogs.objects.filter(
+                models.Q(action__icontains='failed') | 
+                models.Q(action__icontains='login') | 
+                models.Q(action__icontains='security') |
+                models.Q(action__icontains='unauthorized'),
+                **filters
+            ).order_by('-created_at')
+            filename = f"security_logs_export_{timezone.now().strftime('%Y%m%d')}.csv"
+            headers = ['ID', 'User', 'Action', 'IP Address', 'Timestamp']
+            data_rows = [[log.id, log.admin.full_name if log.admin else 'System', log.action, log.ip_address, log.created_at] for log in queryset]
+
+        else:
+            return Response({"error": "Invalid resource"}, status=400)
+
+        # Generate CSV
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        writer = csv.writer(response)
+        writer.writerow(headers)
+        for row in data_rows:
+            writer.writerow(row)
+            
+        return response

@@ -51,37 +51,28 @@ const CustomerHistoryModal = ({ customer, isOpen, onClose, loanToVerify, onVerif
     }
   }, [isOpen, customer]);
 
-  const handleVerify = async () => {
+  const handleUpdateStatus = async (status) => {
     if (!loanToVerify) return;
     
-    // Determine target status based on role
     const userRole = user?.role?.toUpperCase() || user?.admin?.role?.toUpperCase();
-    let targetStatus = 'VERIFIED'; // Default to manager level
-    
-    if (userRole === 'FIELD_OFFICER') {
-        targetStatus = 'FIELD_VERIFIED';
-    } else if (userRole === 'MANAGER' || userRole === 'ADMIN') {
-        // If it's already manager verified, we might be re-verifying
-        targetStatus = 'VERIFIED';
-    }
 
-    if (loanToVerify.status === targetStatus && (userRole === 'MANAGER' || userRole === 'ADMIN')) {
-        if (!window.confirm("This loan is already verified. Do you want to re-verify? (This action will be logged)")) {
-            return;
-        }
+    if (status === 'APPROVED' && !window.confirm(
+      `Approve loan of KES ${Number(loanToVerify.principal_amount).toLocaleString()} for ${customer.full_name}? This will send it to Finance for disbursement.`
+    )) {
+      return;
     }
 
     setUpdating(true);
     try {
       await loanService.api.patch(`/loans/${loanToVerify.id}/`, { 
-        status: targetStatus,
-        status_change_reason: `Verified by ${user.full_name || 'Staff'} (${userRole})`
+        status: status,
+        status_change_reason: `${status} by ${user.full_name || 'Staff'} (${userRole})`
       });
       setSuccessMessage(
-        userRole === 'FIELD_OFFICER'
+        status === 'FIELD_VERIFIED'
           ? 'Loan has been submitted for manager review.'
-          : (userRole === 'MANAGER' || userRole === 'ADMIN')
-            ? 'Loan has been verified and pushed to finance for approval and disbursement.'
+          : status === 'APPROVED'
+            ? 'Loan has been approved and pushed to finance for disbursement.'
             : 'Loan status updated successfully.'
       );
       setVerificationSuccess(true);
@@ -92,10 +83,18 @@ const CustomerHistoryModal = ({ customer, isOpen, onClose, loanToVerify, onVerif
         onClose();
       }, 2000);
     } catch (err) {
-      alert("Verification failed: " + (err.response?.data?.error || err.message));
+      alert("Status update failed: " + (err.response?.data?.error || err.message));
     } finally {
       setUpdating(false);
     }
+  };
+
+  const handleVerify = async () => {
+    if (!loanToVerify) return;
+    const userRole = user?.role?.toUpperCase() || user?.admin?.role?.toUpperCase();
+    let targetStatus = 'VERIFIED';
+    if (userRole === 'FIELD_OFFICER') targetStatus = 'FIELD_VERIFIED';
+    handleUpdateStatus(targetStatus);
   };
 
   const fetchHistory = async () => {
@@ -181,6 +180,17 @@ const CustomerHistoryModal = ({ customer, isOpen, onClose, loanToVerify, onVerif
           ) : (
             <>
               {/* KPIs */}
+              {loanToVerify?.status_change_reason && (
+                <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-900/50 mb-6">
+                  <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 mb-1 font-black text-[10px] uppercase tracking-widest">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Latest Note / Rejection Reason
+                  </div>
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                    {loanToVerify.status_change_reason}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
                   <div className="flex items-center gap-3 text-indigo-600 dark:text-indigo-400 mb-2 font-black text-[10px] uppercase tracking-widest">
@@ -396,26 +406,38 @@ const CustomerHistoryModal = ({ customer, isOpen, onClose, loanToVerify, onVerif
             {verificationSuccess ? (
               <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-lg border border-emerald-100 dark:border-emerald-900/50 animate-in zoom-in duration-300">
                 <CheckCircle className="w-5 h-5" />
-                <span className="font-bold text-sm">Loan Verified Successfully!</span>
+                <span className="font-bold text-sm">{successMessage || 'Action completed successfully!'}</span>
               </div>
             ) : loanToVerify && (
-              <div className="flex items-center gap-3">
-                 <div className="hidden sm:block">
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Reviewing Loan</p>
-                   <p className="text-sm font-bold text-indigo-600">KES {Number(loanToVerify.principal_amount).toLocaleString()}</p>
-                 </div>
-                 <Button
-                  onClick={() => setShowVerificationChecklist(true)}
-                  disabled={updating}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl mt-4"
-                >
-                  {updating ? (
-                    <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                  ) : (
-                    <CheckCircle className="w-4 h-4" />
-                  )}
-                  {getVerifyButtonLabel()}
-                </Button>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                 {['UNVERIFIED', 'FIELD_VERIFIED'].includes(loanToVerify.status) && (
+                   <Button
+                    onClick={() => setShowVerificationChecklist(true)}
+                    disabled={updating}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl mt-4"
+                  >
+                    {updating ? (
+                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4" />
+                    )}
+                    Verify Loan
+                  </Button>
+                 )}
+                 {loanToVerify.status === 'VERIFIED' && (
+                   <Button
+                    onClick={() => handleUpdateStatus('APPROVED')}
+                    disabled={updating}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl mt-4"
+                  >
+                    {updating ? (
+                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      <CheckCircle className="w-3.5 h-3.5" />
+                    )}
+                    ✓ Approve & Send to Finance
+                  </Button>
+                 )}
               </div>
             )}
           </div>

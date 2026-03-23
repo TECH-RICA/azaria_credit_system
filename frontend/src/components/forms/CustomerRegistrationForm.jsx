@@ -23,14 +23,33 @@ import {
   UserPlus
 } from 'lucide-react';
 
-const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCustomer }) => {
+const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCustomer, skipStep0 = false }) => {
   // Try to load saved draft from sessionStorage
-  const savedDraft = JSON.parse(sessionStorage.getItem('registration_draft') || 'null');
+  const savedDraftRaw = sessionStorage.getItem('registration_draft');
+  let savedDraft = null;
+  
+  if (savedDraftRaw) {
+    try {
+      const parsed = JSON.parse(savedDraftRaw);
+      // Check if draft is older than 24 hours (86,400,000 milliseconds)
+      const isExpired = parsed.timestamp && (Date.now() - parsed.timestamp > 24 * 60 * 60 * 1000);
+      
+      if (isExpired) {
+        sessionStorage.removeItem('registration_draft');
+        savedDraft = null;
+      } else {
+        savedDraft = parsed;
+      }
+    } catch (e) {
+      sessionStorage.removeItem('registration_draft');
+    }
+  }
   
   const [step, setStep] = useState(() => {
     if (savedDraft && (!initialCustomer || savedDraft.existingUserId === initialCustomer.id)) {
       return savedDraft.step;
     }
+    if (skipStep0) return 1;
     return initialCustomer ? 1 : 0;
   });
   const [loading, setLoading] = useState(false);
@@ -59,8 +78,12 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
   ];
   
   const [formData, setFormData] = useState(() => {
-    // 1. If we have a draft and it is relevant (either new registration or same customer)
-    if (savedDraft?.formData && (!initialCustomer || savedDraft.existingUserId === initialCustomer.id)) {
+    // 0. Check if this is explicitly a fresh registration (ignores drafts)
+    if (initialCustomer === null || (initialCustomer && !initialCustomer.id)) {
+      // Clear draft if starting fresh
+      sessionStorage.removeItem('registration_draft');
+    } else if (savedDraft?.formData && (!initialCustomer || savedDraft.existingUserId === initialCustomer.id)) {
+       // 1. If we have a draft and it is relevant (either new registration or same customer)
       return {
         ...savedDraft.formData,
         profile_image: null,
@@ -68,8 +91,8 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
       };
     }
 
-    // 2. Otherwise use initial customer data if provided
-    if (initialCustomer) {
+    // 2. Otherwise use initial customer data if provided (Update Mode)
+    if (initialCustomer && initialCustomer.id) {
       return {
         full_name: initialCustomer.full_name || '',
         phone: initialCustomer.phone || '',
@@ -89,7 +112,7 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
       };
     }
     
-    // 3. Fallback to default empty form
+    // 3. Fallback to default empty form (Fresh Registration)
     return {
       full_name: '',
       phone: '',
@@ -117,6 +140,7 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
         step,
         isExistingUser,
         existingUserId,
+        timestamp: savedDraft?.timestamp || Date.now(), // Preserve original timestamp if continuing
         formData: {
           ...formData,
           profile_image: null, // Files can't be saved in sessionStorage
@@ -125,7 +149,7 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
       };
       sessionStorage.setItem('registration_draft', JSON.stringify(draft));
     }
-  }, [step, formData, isExistingUser, existingUserId, isFinished]);
+  }, [step, formData, isExistingUser, existingUserId, isFinished, savedDraft]);
 
   // Automatically clear error messages after 5 seconds
   useEffect(() => {
@@ -378,6 +402,11 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
       const responseData = userRes.data?.data || userRes.data;
       console.log('Registered User Payload:', responseData);
       setRegisteredUser(responseData);
+      // New customer cannot have outstanding loans — reset
+      if (!isExistingUser) {
+          setHasOutstanding(false);
+          setOutstandingLoanDetails(null);
+      }
       setIsFinished(true);
     } catch (err) {
       let errorMessage = 'Failed to process registration';
@@ -1068,29 +1097,42 @@ const CustomerRegistrationForm = ({ onSuccess, onApplyLoan, onCancel, initialCus
             {renderStep()}
 
             {step > 0 && (
-              <div className="mt-8 flex justify-between items-center border-t pt-6">
-                <Button 
-                  variant="secondary" 
-                  onClick={() => {
-                    if (step === 1 && (formData.full_name || formData.phone)) {
-                      if (window.confirm("Go back to lookup? Your current progress for this customer will be reset.")) {
+              <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-between items-center border-t pt-6">
+                <div className="flex gap-2 w-full sm:w-auto">
+                    <Button 
+                    variant="secondary" 
+                    onClick={() => {
+                        if (step === 1 && (formData.full_name || formData.phone)) {
+                        if (window.confirm("Go back to lookup? Your current progress for this customer will be reset.")) {
+                            setStep(0);
+                        }
+                        } else if (step === 1) {
                         setStep(0);
-                      }
-                    } else if (step === 1) {
-                      setStep(0);
-                    } else {
-                      prevStep();
-                    }
-                  }}
-                  disabled={loading}
-                >
-                  {step === 1 ? 'Back to Lookup' : 'Previous'}
-                </Button>
+                        } else {
+                        prevStep();
+                        }
+                    }}
+                    disabled={loading}
+                    className="flex-1 sm:flex-none justify-center"
+                    >
+                    {step === 1 ? 'Back to Lookup' : 'Previous'}
+                    </Button>
+                    {isExistingUser && (
+                        <Button 
+                        onClick={handleSubmit}
+                        disabled={loading}
+                        className="flex-1 sm:flex-none justify-center bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 shadow-sm transition-all active:scale-95"
+                        >
+                        {loading ? '...' : <CheckCircle2 className="w-4 h-4" />}
+                        {loading ? 'Updating...' : 'Update & Exit'}
+                        </Button>
+                    )}
+                </div>
                 
                 <Button 
                   onClick={step === 6 ? handleSubmit : nextStep}
                   disabled={loading || (step === 6 && !formData.agreed_to_terms)}
-                  className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white shadow-md transition-all active:scale-95"
                 >
                   {loading ? 'Submitting...' : step === 6 ? (isExistingUser ? 'Update Information' : 'Register Customer') : 'Next Step'}
                   {step < 6 && <ChevronRight className="w-4 h-4" />}

@@ -2,7 +2,10 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { loanService } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { Table, Button, Card, StatCard, Badge } from '../components/ui/Shared';
-import { useLoans, useRepayments, useFieldOfficers, useCustomers, useInvalidate } from '../hooks/useQueries';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
+import { useRepayments, useFieldOfficers, useCustomers, useInvalidate } from '../hooks/useQueries';
+import { useGodModeGuard } from '../hooks/useGodModeGuard';
 import CustomerRegistrationForm from '../components/forms/CustomerRegistrationForm';
 import RepaymentModal from '../components/ui/RepaymentModal';
 import BulkCustomerSMSModal from '../components/ui/BulkCustomerSMSModal';
@@ -36,8 +39,13 @@ import {
   MessageSquareShare,
   ShieldOff,
   UserCircle,
-  Search
+  Search,
+  ShieldAlert,
+  AlertTriangle,
+  Lock,
+  CalendarDays
 } from 'lucide-react';
+import { format, formatDistanceToNow, isAfter, subHours, subDays } from 'date-fns';
 import { 
   BarChart, 
   Bar, 
@@ -53,16 +61,64 @@ import {
   Pie
 } from 'recharts';
 import DeactivationRequestModal from '../components/ui/DeactivationRequestModal';
+import { useTeamSecurityAlerts } from '../hooks/useQueries';
+
+const formatLastActive = (lastLogin) => {
+  if (!lastLogin) return { label: 'Never Active', color: 'bg-slate-100 text-slate-500 border-slate-200' };
+  
+  const date = new Date(lastLogin);
+  const now = new Date();
+  const diffInMinutes = (now - date) / 1000 / 60;
+  
+  if (diffInMinutes < 5) return { label: 'Online Now', color: 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse' };
+  if (isAfter(date, subHours(now, 2))) return { label: 'Active recently', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+  if (isAfter(date, subHours(now, 24))) return { label: 'Active today', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+  if (isAfter(date, subDays(now, 7))) return { label: formatDistanceToNow(date) + ' ago', color: 'bg-slate-50 text-slate-600 border-slate-200' };
+  
+  return { label: format(date, 'MMM d, yyyy'), color: 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' };
+};
 
 const ManagerDashboard = () => {
   const { user, updateUser } = useAuth();
+  const { guardAction, isRestricted } = useGodModeGuard();
   
-  const { data: loansData, isLoading: loansLoading } = useLoans();
+  const [activeTab, setActiveTab] = useState('ACTIVE');
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const { 
+    data: loans, 
+    isLoading: loansLoading, 
+    isFetching,
+    error: loansError, 
+    hasMore, 
+    showMore: fetchNext, 
+    showLess,
+    reset 
+  } = usePaginatedQuery({
+    queryKey: ['manager-queue', { tab: activeTab, search, date_from: dateFrom, date_to: dateTo }],
+    queryFn: (params) => loanService.getManagerQueue({ 
+      ...params, 
+      tab: activeTab, 
+      search: search || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined
+    })
+  });
+
+  useEffect(() => {
+    reset();
+  }, [activeTab, search, dateFrom, dateTo]);
+
   const { data: repaymentsData, isLoading: repaymentsLoading } = useRepayments();
   const { data: officersData, isLoading: officersLoading } = useFieldOfficers();
   const { data: customersData, isLoading: customersLoading } = useCustomers();
 
   const { invalidateLoans, invalidateRepayments, invalidateCustomers } = useInvalidate();
+
+  const { data: alertsData, isLoading: alertsLoading } = useTeamSecurityAlerts();
+  const alerts = alertsData || [];
 
   const loadingStats = loansLoading || repaymentsLoading;
   const loadingTables = officersLoading || customersLoading;
@@ -84,10 +140,13 @@ const ManagerDashboard = () => {
         try {
           const latestProfile = await loanService.getAdminProfile(adminId);
           if (latestProfile && latestProfile.branch) {
-            // Update auth context so other components see it
-            updateUser({ admin: latestProfile });
+            // Check if we actually need to update to avoid infinite loop
+            const currentUserBranch = user?.admin?.branch || user?.branch;
+            if (latestProfile.branch !== currentUserBranch) {
+                // Update auth context so other components see it
+                updateUser({ ...user, admin: { ...user?.admin, ...latestProfile }, branch: latestProfile.branch });
+            }
             
-            // Update local state if it matches our list
             if (availableBranches.includes(latestProfile.branch)) {
               setSelectedBranch(latestProfile.branch);
             }
@@ -102,23 +161,18 @@ const ManagerDashboard = () => {
     // One-time refresh on mount
   }, []);
 
-  // Update selectedBranch when user object changes (from AuthContext)
+  // Sync selectedBranch when user object changes (but don't trigger updates back)
   useEffect(() => {
     const updatedRaw = user?.admin?.branch || user?.branch;
-    if (updatedRaw && availableBranches.includes(updatedRaw)) {
+    if (updatedRaw && availableBranches.includes(updatedRaw) && updatedRaw !== selectedBranch) {
       setSelectedBranch(updatedRaw);
     }
-  }, [user]);
+  }, [user?.admin?.branch, user?.branch]);
 
-  const loans = useMemo(() => loansData?.results || loansData || [], [loansData]);
   const repayments = useMemo(() => repaymentsData?.results || repaymentsData || [], [repaymentsData]);
   const officersRaw = useMemo(() => officersData?.results || officersData || [], [officersData]);
   const customers = useMemo(() => customersData?.results || customersData || [], [customersData]);
 
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [selectedLoan, setSelectedLoan] = useState(null);
-  const [showRepaymentModal, setShowRepaymentModal] = useState(false);
-  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
@@ -127,10 +181,7 @@ const ManagerDashboard = () => {
   const [reviewingCustomer, setReviewingCustomer] = useState(null);
   const [reviewingLoan, setReviewingLoan] = useState(null);
   const [updating, setUpdating] = useState(false);
-  const [activeTab, setActiveTab] = useState('ACTIVE');
-  const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [updatingLoanId, setUpdatingLoanId] = useState(null);
   const [displayCount, setDisplayCount] = useState(10);
   const [showInviteModal, setShowInviteModal] = useState(false);
 
@@ -138,6 +189,13 @@ const ManagerDashboard = () => {
     const num = Number(val);
     return Number.isFinite(num) ? num : 0;
   };
+
+  const loansList = useMemo(() => loans || [], [loans]);
+
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [selectedLoan, setSelectedLoan] = useState(null);
+  const [showRepaymentModal, setShowRepaymentModal] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   const isBranchFilterActive = selectedBranch && selectedBranch !== 'All' && selectedBranch !== 'Azariah Credit' && selectedBranch !== 'All Branches';
 
@@ -147,10 +205,11 @@ const ManagerDashboard = () => {
   }, [customers, selectedBranch, isBranchFilterActive]);
 
   const branchFilteredLoans = useMemo(() => {
-    if (!isBranchFilterActive) return loans;
-    const validCustomerIds = new Set(branchFilteredCustomers.map(c => c.id));
-    return loans.filter(l => validCustomerIds.has(l.user));
-  }, [loans, branchFilteredCustomers, isBranchFilterActive]);
+    // The backend already filters loans strictly to the manager's assigned branch.
+    // Filtering by checking if customer exists in the local 'customers' array drops 
+    // loans if the customer is not in the first paginated page.
+    return loansList;
+  }, [loansList]);
 
   const branchFilteredRepayments = useMemo(() => {
     if (!isBranchFilterActive) return repayments;
@@ -181,7 +240,7 @@ const ManagerDashboard = () => {
   const officers = useMemo(() => {
     return officersRaw.map(officer => {
       const officerCustomers = customers.filter(c => c.created_by === officer.id).length;
-      const officerLoans = loans.filter(l => l.created_by === officer.id);
+      const officerLoans = loansList.filter(l => l.created_by === officer.id);
       const officerVolume = officerLoans.reduce((sum, l) => sum + parseAmount(l.principal_amount), 0);
       
       return {
@@ -191,14 +250,14 @@ const ManagerDashboard = () => {
         volume: officerVolume
       };
     });
-  }, [officersRaw, customers, loans]);
+  }, [officersRaw, customers, loansList]);
 
   const unverifiedCustomers = useMemo(() => {
     return branchFilteredCustomers.filter(c => !c.is_verified);
   }, [branchFilteredCustomers]);
 
   const statusDistribution = useMemo(() => {
-    const statuses = loans.reduce((acc, l) => {
+    const statuses = loansList.reduce((acc, l) => {
       const s = (l.status || 'PENDING').toUpperCase();
       acc[s] = (acc[s] || 0) + 1;
       return acc;
@@ -207,7 +266,7 @@ const ManagerDashboard = () => {
     return Object.entries(statuses)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [loans]);
+  }, [loansList]);
 
   const chartData = useMemo(() => {
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -255,42 +314,23 @@ const ManagerDashboard = () => {
 
   // Logic for filtered totals
   const processedLoans = useMemo(() => {
-    let result = (branchFilteredLoans || []).filter(l => {
-      const s = (l.status || '').toUpperCase();
-      if (activeTab === 'ACTIVE') return ['DISBURSED', 'ACTIVE', 'OVERDUE', 'CLOSED', 'REPAID'].includes(s);
-      if (activeTab === 'QUEUE') return ['UNVERIFIED', 'FIELD_VERIFIED', 'PENDING'].includes(s);
-      if (activeTab === 'VERIFIED') return ['VERIFIED', 'APPROVED'].includes(s);
-      return s === 'REJECTED';
+    // backend already filters for tab and search
+    let result = [...branchFilteredLoans];
+
+    // Sort - Newest update first (ensures recycled rejects are at bottom/back)
+    // and older APPLICATIONS stay at the top.
+    result.sort((a, b) => {
+      // Primary sort: Oldest created_at first (for equality)
+      return new Date(a.created_at) - new Date(b.created_at);
     });
 
-    // 1. Sort - Oldest first
-    result.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-    // 2. Search
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(item => 
-        (item.customer_name || '').toLowerCase().includes(q) ||
-        (item.customer_id_number || '').toLowerCase().includes(q) ||
-        (item.id || '').toString().includes(q)
-      );
-    }
-
-    // 3. Date Range
-    if (dateFrom) result = result.filter(item => new Date(item.created_at) >= new Date(dateFrom));
-    if (dateTo) result = result.filter(item => new Date(item.created_at) <= new Date(dateTo + 'T23:59:59'));
-
     return result;
-  }, [branchFilteredLoans, activeTab, search, dateFrom, dateTo]);
+  }, [branchFilteredLoans]);
 
-  const getTotals = (loansList) => {
-    return (loansList || []).reduce((acc, l) => ({
-      repayable: acc.repayable + Number(l.total_repayable_amount || 0),
-      principal: acc.principal + Number(l.principal_amount || 0)
-    }), { repayable: 0, principal: 0 });
-  };
-
-  const totals = getTotals(processedLoans);
+  const totals = (processedLoans || []).reduce((acc, l) => ({
+    repayable: acc.repayable + Number(l.total_repayable_amount || 0),
+    principal: acc.principal + Number(l.principal_amount || 0)
+  }), { repayable: 0, principal: 0 });
 
   const [analytics, setAnalytics] = useState({ monthly_disbursements: [], status_breakdown: [] });
 
@@ -345,6 +385,7 @@ const ManagerDashboard = () => {
 
   const handleUpdateLoanStatus = async (loanId, newStatus) => {
     setUpdating(true);
+    setUpdatingLoanId(loanId);
     try {
       await loanService.updateLoan(loanId, { 
         status: newStatus,
@@ -358,6 +399,7 @@ const ManagerDashboard = () => {
       alert("Error updating status");
     } finally {
       setUpdating(false);
+      setUpdatingLoanId(null);
     }
   };
 
@@ -419,13 +461,18 @@ const ManagerDashboard = () => {
           </div>
           <Button 
             variant="secondary"
-            onClick={() => setShowInviteModal(true)} 
+            disabled={isRestricted}
+            onClick={() => guardAction(() => setShowInviteModal(true))} 
             className="flex items-center gap-2"
           >
             <UserCircle className="w-4 h-4" />
             Invite Field Officer
           </Button>
-          <Button onClick={() => setIsRegistering(true)} className="flex items-center gap-2">
+          <Button 
+            disabled={isRestricted}
+            onClick={() => guardAction(() => setIsRegistering(true))} 
+            className="flex items-center gap-2"
+          >
             <UserPlus className="w-4 h-4" />
             Register Customer
           </Button>
@@ -604,6 +651,7 @@ const ManagerDashboard = () => {
               <thead className="bg-slate-50 dark:bg-slate-800/50 border-y border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">Officer</th>
+                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-center">Status</th>
                   <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-center">Customers</th>
                   <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-center">Loans</th>
                   <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-right">Volume (KES)</th>
@@ -611,41 +659,72 @@ const ManagerDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {officers.slice(0, 5).map((off) => (
-                  <tr key={off.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="px-6 py-4">
-                       <p className="text-sm font-semibold text-slate-900 dark:text-white">{off.full_name}</p>
-                       <p className="text-xs text-slate-500">{off.email}</p>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                       <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{off.customersCount}</span>
-                    </td>
-                    <td className="px-6 py-4 text-center text-sm text-slate-700 dark:text-slate-300">
-                       {off.loansCount}
-                    </td>
-                    <td className="px-6 py-4 text-right text-sm font-bold text-primary-600 dark:text-primary-400">
-                       {(off.volume || 0).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                       <button 
-                         type="button"
-                         onClick={(e) => {
-                           e.preventDefault();
-                           e.stopPropagation();
-                           setOfficerToDeactivate(off);
-                           setIsDeactivateModalOpen(true);
-                         }}
-                         className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 rounded-lg transition-colors relative z-10"
-                         title="Request Deactivation"
-                       >
-                         <ShieldOff className="w-5 h-5" />
-                       </button>
-                    </td>
-                  </tr>
-                ))}
+                {officers.slice(0, 5).map((off) => {
+                  const status = formatLastActive(off.last_login);
+                  return (
+                    <tr key={off.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold text-xs ring-2 ring-white dark:ring-slate-900">
+                             {off.full_name?.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">{off.full_name}</p>
+                            <p className="text-xs text-slate-400">{off.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${status.color}`}>
+                          {status.label}
+                        </span>
+                        {off.failed_login_attempts > 0 && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 text-[9px] font-black uppercase ring-1 ring-red-200">
+                              <ShieldAlert className="w-2.5 h-2.5 mr-0.5" />
+                              {off.failed_login_attempts} Failed
+                            </span>
+                          </div>
+                        )}
+                        {off.is_locked_out && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase">
+                              <Lock className="w-2.5 h-2.5 mr-0.5" />
+                              LOCKED
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{off.customersCount}</span>
+                      </td>
+                      <td className="px-6 py-4 text-center text-sm text-slate-700 dark:text-slate-300">
+                        {off.loansCount}
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm font-bold text-primary-600 dark:text-primary-400">
+                        {(off.volume || 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button 
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOfficerToDeactivate(off);
+                            setIsDeactivateModalOpen(true);
+                          }}
+                          className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 rounded-lg transition-colors relative z-10"
+                          title="Request Deactivation"
+                        >
+                          <ShieldOff className="w-5 h-5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {officers.length === 0 && (
                   <tr>
-                    <td colSpan="5" className="px-6 py-12 text-center text-slate-400 italic">No field officers assigned to this branch yet</td>
+                    <td colSpan="6" className="px-6 py-12 text-center text-slate-400 italic">No field officers assigned to this branch yet</td>
                   </tr>
                 )}
               </tbody>
@@ -682,7 +761,7 @@ const ManagerDashboard = () => {
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                  <div className="flex items-center justify-between text-sm">
                     <span className="text-slate-500">Total Portfolio Value</span>
                     <span className="font-bold text-slate-900 dark:text-white">KES {stats.issued.toLocaleString()}</span>
@@ -691,6 +770,49 @@ const ManagerDashboard = () => {
                     <span className="text-slate-500">Active Customers</span>
                     <span className="font-bold text-slate-900 dark:text-white">{stats.served}</span>
                  </div>
+              </div>
+
+              {/* Branch Security Alerts */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wider">
+                    <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
+                    Security Alerts
+                  </h4>
+                  {alerts.length > 0 && (
+                    <span className="flex h-2 w-2 rounded-full bg-red-500 animate-ping"></span>
+                  )}
+                </div>
+                
+                <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                  {alerts.length > 0 ? (
+                    alerts.slice(0, 5).map((alert, idx) => (
+                      <div key={idx} className="p-2.5 rounded-lg bg-red-50/50 dark:bg-red-900/10 border border-red-100/50 dark:border-red-900/20 group hover:bg-red-50 transition-colors">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-600 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-bold text-slate-900 dark:text-white leading-tight mb-0.5">
+                              {alert.action}
+                            </p>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-slate-500">
+                                {alert.admin_name || 'System'}
+                              </span>
+                              <span className="text-[9px] font-medium text-slate-400">
+                                {formatDistanceToNow(new Date(alert.created_at))} ago
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-6 text-center">
+                      <ShieldCheck className="w-8 h-8 text-emerald-200 mx-auto mb-2" />
+                      <p className="text-[10px] text-slate-400 italic font-medium">No security threats detected in your branch.</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <Button variant="outline" className="w-full gap-2 text-xs py-2">
@@ -712,7 +834,8 @@ const ManagerDashboard = () => {
            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
              {[
                { id: 'QUEUE', label: 'Review Queue' },
-               { id: 'VERIFIED', label: 'Pushed to Finance' },
+               { id: 'VERIFIED', label: 'Manager Verified' },
+               { id: 'APPROVED', label: 'Pushed to Finance' },
                { id: 'ACTIVE', label: 'Disbursed' },
                { id: 'REJECTED', label: 'Rejected' }
              ].map(tab => (
@@ -771,6 +894,7 @@ const ManagerDashboard = () => {
             data={processedLoans}
             loading={loadingStats}
             initialCount={10}
+            disableLocalPagination={true}
             renderRow={(loan) => (
               <tr key={loan.id} className="text-[10px] md:text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800/50 last:border-0 whitespace-nowrap">
                 <td className="px-4 py-3 font-mono font-bold text-slate-500">#{loan.id}</td>
@@ -793,23 +917,50 @@ const ManagerDashboard = () => {
                    </Badge>
                 </td>
                 <td className="px-4 py-3 text-right">
-                   {(loan.status === 'UNVERIFIED' || loan.status === 'FIELD_VERIFIED' || loan.status === 'PENDING') && (
+                   {activeTab === 'QUEUE' && (loan.status === 'UNVERIFIED' || loan.status === 'FIELD_VERIFIED' || loan.status === 'PENDING') && (
+                     <div className="flex gap-2">
+                       <button 
+                         onClick={() => {
+                            const customerObj = customers.find(c => c.id === loan.user) || { id: loan.user, full_name: loan.customer_name, national_id: loan.customer_id_number, phone_number: loan.phone_number };
+                            setReviewingLoan(loan);
+                            setReviewingCustomer(customerObj);
+                            setIsReviewOpen(true);
+                         }}
+                         className="p-1 px-4 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-[10px] font-black uppercase transition-all shadow-sm hover:shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                         disabled={updatingLoanId === loan.id}
+                       >
+                         {updatingLoanId === loan.id ? "..." : "VERIFY LOAN"}
+                       </button>
+                       <button 
+                         onClick={() => {
+                            if (window.confirm("Approve this loan and send to Finance for disbursement?")) {
+                              handleUpdateLoanStatus(loan.id, 'APPROVED');
+                            }
+                         }}
+                         className="p-1 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black uppercase transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                         disabled={updatingLoanId === loan.id}
+                       >
+                         {updatingLoanId === loan.id ? "PUSHING..." : "✓ APPROVE"}
+                       </button>
+                     </div>
+                   )}
+                   {activeTab === 'VERIFIED' && (
                      <button 
                        onClick={() => {
-                          const customerObj = customers.find(c => c.id === loan.user);
-                          setReviewingLoan(loan);
-                          setReviewingCustomer(customerObj);
-                          setIsReviewOpen(true);
+                          if (window.confirm("Approve this loan and send to Finance for disbursement?")) {
+                            handleUpdateLoanStatus(loan.id, 'APPROVED');
+                          }
                        }}
-                       className="p-1 px-4 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-[10px] font-black uppercase transition-all shadow-sm hover:shadow-orange-500/20"
+                       className="p-1 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black uppercase transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                       disabled={updatingLoanId === loan.id}
                      >
-                       VERIFY LOAN
+                       {updatingLoanId === loan.id ? "FORWARDING..." : "✓ APPROVE & SEND TO FINANCE"}
                      </button>
                    )}
-                   {(loan.status === 'VERIFIED' || loan.status === 'APPROVED') && (
+                   {activeTab === 'APPROVED' && (
                      <button 
                        onClick={() => {
-                         const customerObj = customers.find(c => c.id === loan.user);
+                         const customerObj = customers.find(c => c.id === loan.user) || { id: loan.user, full_name: loan.customer_name, national_id: loan.customer_id_number, phone_number: loan.phone_number };
                          setReviewingLoan(loan);
                          setReviewingCustomer(customerObj);
                          setIsReviewOpen(true);
@@ -835,9 +986,29 @@ const ManagerDashboard = () => {
                        REPAYMENT
                      </Button>
                    )}
+                   {loan.status === 'REJECTED' && (
+                     <button 
+                       onClick={() => {
+                         const customerObj = customers.find(c => c.id === loan.user) || { id: loan.user, full_name: loan.customer_name, national_id: loan.customer_id_number, phone_number: loan.phone_number };
+                         setReviewingLoan(loan);
+                         setReviewingCustomer(customerObj);
+                         setIsReviewOpen(true);
+                       }}
+                       className="p-1 px-4 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm"
+                     >
+                       VIEW REASON
+                     </button>
+                   )}
                 </td>
               </tr>
             )}
+          />
+          <PaginationFooter
+            resultsCount={processedLoans.length}
+            hasMore={hasMore}
+            isLoading={isFetching}
+            onShowMore={fetchNext}
+            onShowLess={showLess}
           />
         </div>
       </Card>
@@ -1262,7 +1433,6 @@ const ManagerDashboard = () => {
           customer={reviewingCustomer}
           loanToVerify={reviewingLoan}
           onVerified={() => {
-            setIsReviewOpen(false);
             invalidateLoans();
             invalidateCustomers();
           }}

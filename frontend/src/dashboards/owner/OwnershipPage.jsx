@@ -16,11 +16,12 @@ import {
   Mail
 } from 'lucide-react';
 import { loanService } from '../../api/api';
-import { Card, Button, Badge } from '../../components/ui/Shared';
+import { Card, Button, Badge, cn } from '../../components/ui/Shared';
 import { useAuth } from '../../context/AuthContext';
 import { useOwnership, useInvalidate } from '../../hooks/useQueries';
 import toast from 'react-hot-toast';
 import BulkInviteModal from '../../components/forms/BulkInviteModal';
+import ExportButton from '../../components/ui/ExportButton';
 
 const OwnershipPage = () => {
   const { user } = useAuth();
@@ -42,9 +43,33 @@ const OwnershipPage = () => {
   
   // Modal State
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [modalConfig, setModalConfig] = useState({ type: '', description: '' });
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [modalConfig, setModalConfig] = useState({ type: "", description: "" });
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const handleToggleGodMode = async (targetOwner, enable) => {
+    if (
+      enable &&
+      !window.confirm(
+        `Are you sure you want to grant God Mode to ${targetOwner.email}? They will be able to act as any role in the system.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await loanService.toggleGodMode({
+        target_admin_id: targetOwner.id,
+        enabled: enable,
+      });
+      toast.success(
+        `God Mode ${enable ? "granted to" : "revoked from"} ${targetOwner.email}`
+      );
+      invalidateOwnership();
+    } catch (e) {
+      toast.error(e.response?.data?.error || "Failed to toggle God Mode");
+    }
+  };
 
   const handleSearch = async (query) => {
     setSearchQuery(query);
@@ -155,6 +180,11 @@ const OwnershipPage = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <ExportButton 
+              resource="customers" 
+              dateRange={{ from: '', to: '' }} 
+              filename={`customers_export_${new Date().toISOString().split('T')[0]}.csv`}
+            />
             <Button 
               variant="outline"
               size="sm"
@@ -207,55 +237,110 @@ const OwnershipPage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {owners.map(o => (
-                <tr key={o.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+              {owners.map((o) => (
+                <tr
+                  key={o.id}
+                  className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
+                >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-bold text-xs">
+                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-bold text-xs text-slate-600 dark:text-slate-300">
                         {o.full_name[0]}
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5 leading-none mb-1">
                           {o.full_name}
-                          {o.id === user.id && <span className="text-[10px] bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400 px-1.5 py-0.5 rounded-full font-black uppercase tracking-tighter">You</span>}
+                          {o.id === user.id && (
+                            <span className="text-[10px] bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400 px-1.5 py-0.5 rounded-full font-black uppercase tracking-tighter">
+                              You
+                            </span>
+                          )}
                         </p>
-                        <p className="text-xs text-slate-500">{o.email}</p>
+                        <p className="text-xs text-slate-500 font-medium">
+                          {o.email}
+                        </p>
                       </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1.5">
-                      {o.is_primary_owner && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 rounded-full text-[10px] font-black uppercase tracking-tight">
-                          <Crown className="w-3 h-3" /> Primary
-                        </span>
+                      {o.is_primary_owner ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 rounded-full text-[10px] font-black uppercase tracking-tight w-fit">
+                            <Crown className="w-3 h-3" /> Primary Owner
+                          </span>
+                          <span className="px-2 py-0.5 bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400 rounded-full text-[9px] font-bold uppercase tracking-tight italic w-fit">
+                            God Mode Permanent
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          {o.god_mode_enabled ? (
+                            <span className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400 rounded-full text-[10px] font-black uppercase tracking-tight w-fit">
+                              <ShieldAlert className="w-3 h-3" /> God Mode Active
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500 rounded-full text-[10px] font-black uppercase tracking-tight w-fit">
+                              God Mode Off
+                            </span>
+                          )}
+                          {user.is_primary_owner && (
+                            <button
+                              onClick={() =>
+                                handleToggleGodMode(o, !o.god_mode_enabled)
+                              }
+                              className={cn(
+                                "text-[10px] font-black uppercase tracking-tighter px-2 py-1 rounded-md transition-colors w-fit",
+                                o.god_mode_enabled
+                                  ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                                  : "text-purple-600 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 shadow-sm border border-purple-200 dark:border-purple-800"
+                              )}
+                            >
+                              {o.god_mode_enabled
+                                ? "Revoke God Mode"
+                                : "Grant God Mode"}
+                            </button>
+                          )}
+                        </div>
                       )}
-                      {o.god_mode_enabled && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400 rounded-full text-[10px] font-black uppercase tracking-tight">
-                          <ShieldAlert className="w-3 h-3" /> God Mode
-                        </span>
-                      )}
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 rounded-full text-[10px] font-black uppercase tracking-tight">
-                        {o.role}
-                      </span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                    {o.ownership_granted_at ? new Date(o.ownership_granted_at).toLocaleDateString(undefined, { dateStyle: 'medium' }) : 'Initial Setup'}
-                    {o.ownership_granted_by_name && <p className="text-[10px] text-slate-400 italic">by {o.ownership_granted_by_name}</p>}
+                    {o.ownership_granted_at
+                      ? new Date(o.ownership_granted_at).toLocaleDateString(
+                          undefined,
+                          { dateStyle: "medium" }
+                        )
+                      : "Initial Setup"}
+                    {o.ownership_granted_by_name && (
+                      <p className="text-[10px] text-slate-400 italic">
+                        by {o.ownership_granted_by_name}
+                      </p>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-right">
                     {o.id === user.id ? (
-                      <button 
-                        onClick={() => openConfirmModal('relinquish', 'You are about to permanently remove yourself as an Owner of this system. This cannot be undone without another Owner granting you ownership again.')}
+                      <button
+                        onClick={() =>
+                          openConfirmModal(
+                            "relinquish",
+                            "You are about to permanently remove yourself as an Owner of this system. This cannot be undone without another Owner granting you ownership again."
+                          )
+                        }
                         disabled={ownerCount <= 1}
                         className="text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 disabled:grayscale"
-                        title={ownerCount <= 1 ? "You cannot relinquish while you are the only owner" : "Relinquish Ownership"}
+                        title={
+                          ownerCount <= 1
+                            ? "You cannot relinquish while you are the only owner"
+                            : "Relinquish Ownership"
+                        }
                       >
                         Relinquish
                       </button>
                     ) : (
-                      <span className="text-[10px] font-bold text-slate-400 uppercase italic">No Actions</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase italic">
+                        No Actions
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -577,10 +662,5 @@ const OwnershipPage = () => {
     </div>
   );
 };
-
-// Internal CN helper since it was used in code
-function cn(...classes) {
-  return classes.filter(Boolean).join(' ');
-}
 
 export default OwnershipPage;

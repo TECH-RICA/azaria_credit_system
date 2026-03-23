@@ -97,7 +97,25 @@ def send_password_reset_email_async(full_name, email, reset_code):
                 </html>
             """,
         }
-        requests.post(url, json=payload, headers=headers)
+        try:
+            res = requests.post(url, json=payload, headers=headers)
+            from ..models import EmailLog
+            EmailLog.objects.create(
+                recipient_email=email,
+                subject=payload["subject"],
+                message=payload["htmlContent"],
+                status="SENT" if res.status_code in [200, 201, 202] else "FAILED",
+                error_details=res.text if res.status_code not in [200, 201, 202] else None
+            )
+        except Exception as e:
+            from ..models import EmailLog
+            EmailLog.objects.create(
+                recipient_email=email,
+                subject=payload["subject"],
+                message=payload["htmlContent"],
+                status="FAILED",
+                error_details=str(e)
+            )
     except Exception:
         pass
 
@@ -142,7 +160,25 @@ def send_new_device_login_alert_async(full_name, email, context):
                 </html>
             """,
         }
-        requests.post(url, json=payload, headers=headers)
+        try:
+            res = requests.post(url, json=payload, headers=headers)
+            from ..models import EmailLog
+            EmailLog.objects.create(
+                recipient_email=email,
+                subject=payload["subject"],
+                message=payload["htmlContent"],
+                status="SENT" if res.status_code in [200, 201, 202] else "FAILED",
+                error_details=res.text if res.status_code not in [200, 201, 202] else None
+            )
+        except Exception as e:
+            from ..models import EmailLog
+            EmailLog.objects.create(
+                recipient_email=email,
+                subject=payload["subject"],
+                message=payload["htmlContent"],
+                status="FAILED",
+                error_details=str(e)
+            )
     except Exception as e:
         print(f"Error sending login alert: {e}")
 
@@ -239,16 +275,10 @@ class LoginView(views.APIView):
                 admin.failed_login_attempts = 0
                 admin.lockout_until = None
                 admin.last_login_ip = client_ip
+                admin.last_login_at = timezone.now()
+                admin.login_count = (admin.login_count or 0) + 1
                 admin.save()
-
-                log_action(
-                    admin,
-                    "User Login",
-                    "admins",
-                    admin.id,
-                    log_type="MANAGEMENT",
-                    ip_address=client_ip,
-                )
+                # Normal login — no audit log entry needed.
 
                 if admin.is_two_factor_enabled:
                     return Response(
@@ -281,7 +311,8 @@ class LoginView(views.APIView):
                         "access": access_token,
                         "refresh": refresh_token,
                         "role": admin.role,
-                        "god_mode_enabled": admin.god_mode_enabled or admin.is_owner,
+                        "is_primary_owner": admin.is_primary_owner,
+                        "god_mode_enabled": admin.god_mode_enabled and admin.is_owner,
                         "is_owner": admin.is_owner,
                         "is_super_admin": admin.is_super_admin,
                         "admin": AdminSerializer(admin).data,
@@ -362,6 +393,10 @@ class Login2FAVerifyView(views.APIView):
                         "access": str(refresh.access_token),
                         "refresh": str(refresh),
                         "role": admin.role,
+                        "is_primary_owner": admin.is_primary_owner,
+                        "god_mode_enabled": admin.god_mode_enabled and admin.is_owner,
+                        "is_owner": admin.is_owner,
+                        "is_super_admin": admin.is_super_admin,
                         "admin": AdminSerializer(admin).data,
                     }
                 )
@@ -655,3 +690,18 @@ class ConfirmPasswordResetView(views.APIView):
             return Response({"message": "Password reset successfully. You can now login."})
         except Admins.DoesNotExist:
             return Response({"error": "Invalid or expired reset code"}, status=400)
+
+class LogoutView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            user.last_logout_at = timezone.now()
+            user.save(update_fields=['last_logout_at'])
+        except Exception:
+            pass  # Never block logout even if save fails
+        return Response(
+            {"message": "Logged out successfully."},
+            status=status.HTTP_200_OK
+        )

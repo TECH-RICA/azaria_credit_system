@@ -14,9 +14,12 @@ import { loanService } from '../../api/api';
 import { useAuditLogs } from '../../hooks/useQueries';
 import { Card } from '../../components/ui/Shared';
 import toast from 'react-hot-toast';
+import DateRangeFilter from '../../components/ui/DateRangeFilter';
+import ExportButton from '../../components/ui/ExportButton';
 
 const OwnerAuditPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [filters, setFilters] = useState({
     log_type: '',
     search: ''
@@ -25,7 +28,9 @@ const OwnerAuditPage = () => {
   const { data: auditData, isLoading: loading } = useAuditLogs({ 
     page: currentPage, 
     log_type: filters.log_type,
-    search: filters.search 
+    search: filters.search,
+    date_from: dateRange.from || undefined,
+    date_to: dateRange.to || undefined
   });
 
   const logs = useMemo(() => auditData?.results || [], [auditData]);
@@ -76,7 +81,13 @@ const OwnerAuditPage = () => {
           </p>
         </div>
         
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto items-center">
+          <ExportButton 
+            resource="audit_logs" 
+            dateRange={dateRange} 
+            filename={`audit_export_${new Date().toISOString().split('T')[0]}.csv`}
+          />
+          <DateRangeFilter onChange={setDateRange} />
           <div className="relative flex-1 md:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4" />
             <input

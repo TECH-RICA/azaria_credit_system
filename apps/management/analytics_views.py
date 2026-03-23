@@ -295,6 +295,30 @@ class FinanceAnalyticsView(views.APIView):
             for entry in ledger_entries
         ]
 
+        from ..models import LoanProducts, Users
+        product_dist = (
+            Loans.objects.filter(status__in=disbursed_statuses)
+            .values('loan_product__name')
+            .annotate(
+                value=Sum('principal_amount'),
+                count=Count('id')
+            )
+            .order_by('-value')
+        )
+        product_distribution = [
+            {
+                'name': p['loan_product__name'] or 'Unknown',
+                'value': float(p['value'] or 0),
+                'count': p['count']
+            }
+            for p in product_dist
+        ]
+
+        total_customers = Users.objects.count()
+        active_loans = Loans.objects.filter(
+            status__in=['DISBURSED', 'ACTIVE', 'OVERDUE']
+        ).count()
+
         return Response(
             {
                 "balance": balance,
@@ -311,5 +335,346 @@ class FinanceAnalyticsView(views.APIView):
                     "days_90": float(aging_90),
                 },
                 "collection_log": collection_log,
+                "product_distribution": product_distribution,
+                "total_customers": total_customers,
+                "active_loans": active_loans,
             }
         )
+
+  
+class OwnerAnalyticsView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not getattr(request.user, 'is_owner', False):
+            return Response({"error": "Owner only."}, status=403)
+
+        from django.db.models.functions import TruncMonth, TruncDate
+        today = timezone.now().date()
+        thirty_days_ago = today - timedelta(days=30)
+        disbursed_statuses = [
+            "DISBURSED", "ACTIVE", "OVERDUE", "CLOSED", "REPAID"
+        ]
+
+        from ..models import (
+            Loans, Repayments, Users, Admins, Branch, SystemCapital, RepaymentSchedule
+        )
+
+        # --- BRANCH PERFORMANCE ---
+        branches = Branch.objects.all()
+        branch_performance = []
+        for branch in branches:
+            branch_loans = Loans.objects.filter(
+                branch=branch,
+                status__in=disbursed_statuses
+            )
+            branch_overdue = branch_loans.filter(
+                status='OVERDUE')
+            branch_repayments = Repayments.objects.filter(
+                loan__branch=branch
+            )
+            principal = branch_loans.aggregate(
+                t=Sum('principal_amount'))['t'] or 0
+            collected = branch_repayments.aggregate(
+                t=Sum('amount_paid'))['t'] or 0
+            overdue_amt = branch_overdue.aggregate(
+                t=Sum('principal_amount'))['t'] or 0
+            branch_performance.append({
+                'branch': branch.name,
+                'total_loans': branch_loans.count(),
+                'principal_disbursed': float(principal),
+                'total_collected': float(collected),
+                'overdue_count': branch_overdue.count(),
+                'overdue_amount': float(overdue_amt),
+                'overdue_rate': round(
+                    (float(overdue_amt) / float(principal) * 100)
+                    if principal > 0 else 0, 1),
+            })
+
+        # --- STAFF PERFORMANCE DATA ---
+        
+        # --- FIELD OFFICER PERFORMANCE ---
+        field_officers = Admins.objects.filter(role='FIELD_OFFICER')
+        field_officer_stats = []
+        for officer in field_officers:
+            loans_submitted = Loans.objects.filter(
+                created_by=officer,
+                created_at__date__gte=thirty_days_ago
+            ).count()
+            loans_verified = Loans.objects.filter(
+                created_by=officer,
+                status__in=['VERIFIED','APPROVED','DISBURSED',
+                            'ACTIVE','OVERDUE','CLOSED'],
+                updated_at__date__gte=thirty_days_ago
+            ).count()
+            customers_registered = Users.objects.filter(
+                created_by=officer,
+                created_at__date__gte=thirty_days_ago
+            ).count()
+            overdue_count = Loans.objects.filter(
+                created_by=officer, status='OVERDUE'
+            ).count()
+            total_portfolio = Loans.objects.filter(
+                created_by=officer,
+                status__in=['DISBURSED','ACTIVE','OVERDUE']
+            ).aggregate(t=Sum('principal_amount'))['t'] or 0
+            field_officer_stats.append({
+                'name': officer.full_name,
+                'email': officer.email,
+                'branch': officer.branch_fk.name
+                    if officer.branch_fk else 'N/A',
+                'customers_registered': customers_registered,
+                'loans_submitted': loans_submitted,
+                'loans_verified': loans_verified,
+                'overdue_loans': overdue_count,
+                'total_portfolio': float(total_portfolio),
+                'last_active': 'N/A',
+            })
+
+        # --- MANAGER PERFORMANCE ---
+        managers = Admins.objects.filter(role='MANAGER')
+        manager_stats = []
+        for manager in managers:
+            branch = manager.branch_fk
+            branch_loans = Loans.objects.filter(
+                branch=branch) if branch else Loans.objects.none()
+            loans_approved = branch_loans.filter(
+                status__in=['APPROVED','DISBURSED','ACTIVE',
+                            'OVERDUE','CLOSED'],
+                updated_at__date__gte=thirty_days_ago
+            ).count()
+            loans_rejected = Loans.objects.filter(
+                status='REJECTED',
+                updated_at__date__gte=thirty_days_ago,
+                branch=branch
+            ).count() if branch else 0
+            overdue_in_branch = branch_loans.filter(
+                status='OVERDUE').count()
+            officers_under = Admins.objects.filter(
+                role='FIELD_OFFICER',
+                branch_fk=branch
+            ).count() if branch else 0
+            total_branch_portfolio = branch_loans.filter(
+                status__in=['DISBURSED','ACTIVE','OVERDUE']
+            ).aggregate(t=Sum('principal_amount'))['t'] or 0
+            manager_stats.append({
+                'name': manager.full_name,
+                'email': manager.email,
+                'branch': branch.name if branch else 'N/A',
+                'loans_approved': loans_approved,
+                'loans_rejected': loans_rejected,
+                'overdue_in_branch': overdue_in_branch,
+                'field_officers_count': officers_under,
+                'branch_portfolio': float(total_branch_portfolio),
+                'last_active': 'N/A',
+            })
+
+        from django.db.models.functions import Cast
+        from django.db.models import FloatField
+        # --- FINANCE OFFICER PERFORMANCE ---
+        finance_officers = Admins.objects.filter(
+            role='FINANCIAL_OFFICER')
+        finance_stats = []
+        for fo in finance_officers:
+            from ..models import AuditLogs
+            loans_disbursed = AuditLogs.objects.filter(
+                admin=fo,
+                action='LOAN_DISBURSED',
+                created_at__date__gte=thirty_days_ago
+            ).count()
+            total_disbursed_amt = AuditLogs.objects.filter(
+                admin=fo,
+                action='LOAN_DISBURSED',
+                created_at__date__gte=thirty_days_ago
+            ).annotate(
+                amt=Cast(F('new_data__amount'), FloatField())
+            ).aggregate(
+                t=Sum('amt')
+            )['t'] or 0
+            unmatched_resolved = AuditLogs.objects.filter(
+                admin=fo,
+                log_type='MANAGEMENT',
+                action__icontains='assigned',
+                created_at__date__gte=thirty_days_ago
+            ).count()
+            finance_stats.append({
+                'name': fo.full_name,
+                'email': fo.email,
+                'loans_disbursed': loans_disbursed,
+                'total_disbursed_amount': float(
+                    total_disbursed_amt),
+                'unmatched_resolved': unmatched_resolved,
+                'last_active': 'N/A',
+            })
+
+        # --- ADMIN PERFORMANCE ---
+        admins_list = Admins.objects.filter(role='ADMIN')
+        admin_stats = []
+        for admin in admins_list:
+            managers_invited = Admins.objects.filter(
+                invited_by=admin, role='MANAGER'
+            ).count()
+            officers_invited = Admins.objects.filter(
+                invited_by=admin, role='FIELD_OFFICER'
+            ).count()
+            admin_stats.append({
+                'name': admin.full_name,
+                'email': admin.email,
+                'managers_invited': managers_invited,
+                'officers_invited': officers_invited,
+                'last_active': 'N/A',
+            })
+
+        # --- STAFF ACTIVITY (last 30 days) - Legacy support ---
+        staff_activity = field_officer_stats
+
+        # --- OVERDUE TRACKER ---
+        overdue_loans_qs = Loans.objects.filter(
+            status='OVERDUE'
+        ).select_related(
+            'user', 'branch', 'created_by'
+        ).order_by('updated_at')
+
+        overdue_tracker = []
+        for loan in overdue_loans_qs:
+            try:
+                days_overdue = (today - loan.updated_at.date()).days
+            except (AttributeError, TypeError):
+                days_overdue = 0
+
+            last_repayment = Repayments.objects.filter(
+                loan=loan
+            ).order_by('-payment_date').first()
+
+            overdue_tracker.append({
+                'loan_id': str(loan.id) if loan.id else "N/A",
+                'customer': loan.user.full_name
+                    if loan.user else 'N/A',
+                'phone': loan.user.phone
+                    if loan.user else 'N/A',
+                'branch': loan.branch.name
+                    if loan.branch else 'N/A',
+                'field_officer': loan.created_by.full_name
+                    if loan.created_by else 'N/A',
+                'principal': float(loan.principal_amount or 0),
+                'days_overdue': days_overdue,
+                'last_payment_date': last_repayment.payment_date
+                    .strftime('%Y-%m-%d')
+                    if (last_repayment and last_repayment.payment_date) else 'Never',
+                'last_payment_amount': float(
+                    last_repayment.amount_paid or 0)
+                    if last_repayment else 0,
+            })
+
+        # --- CUSTOMER GROWTH (last 12 months) ---
+        customer_growth = (
+            Users.objects
+            .filter(created_at__date__gte=today-timedelta(days=365))
+            .annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(count=Count('id'))
+            .order_by('month')
+        )
+        growth_data = [
+            {
+                'month': g['month'].strftime('%b %Y'),
+                'customers': g['count']
+            }
+            for g in customer_growth
+        ]
+
+        # --- COLLECTIONS EFFICIENCY ---
+        total_scheduled = RepaymentSchedule.objects.filter(
+            due_date__lte=today
+        ).aggregate(t=Sum('amount_due'))['t'] or 0
+        total_collected = Repayments.objects.aggregate(
+            t=Sum('amount_paid'))['t'] or 0
+        collection_efficiency = round(
+            (float(total_collected) / float(total_scheduled) * 100)
+            if total_scheduled > 0 else 0, 1)
+
+        # --- LOAN TURNAROUND TIME ---
+        approved_loans = Loans.objects.filter(
+            status__in=disbursed_statuses
+        ).exclude(disbursed_at=None)
+        turnaround_days = []
+        for loan in approved_loans[:100]:
+            if loan.disbursed_at and loan.created_at:
+                days = (loan.disbursed_at.date() -
+                        loan.created_at.date()).days
+                turnaround_days.append(days)
+        avg_turnaround = round(
+            sum(turnaround_days) / len(turnaround_days)
+            if turnaround_days else 0, 1)
+
+        # --- CASH FLOW PROJECTION (next 30 days) ---
+        thirty_days_future = today + timedelta(days=30)
+        upcoming_schedules = (
+            RepaymentSchedule.objects
+            .filter(
+                due_date__gte=today,
+                due_date__lte=thirty_days_future
+            )
+            .annotate(day=TruncDate('due_date'))
+            .values('day')
+            .annotate(expected=Sum('amount_due'))
+            .order_by('day')
+        )
+        cashflow_projection = [
+            {
+                'date': str(s['day']),
+                'expected': float(s['expected'] or 0)
+            }
+            for s in upcoming_schedules
+        ]
+
+        # --- ALERTS ---
+        alerts = []
+        try:
+            capital = SystemCapital.objects.filter(
+                name='Simulation Capital').first()
+            if capital and float(capital.balance) < 50000:
+                alerts.append({
+                    'type': 'warning',
+                    'message': f'Capital balance is low: '
+                        f'KES {float(capital.balance):,.0f}',
+                    'category': 'capital'
+                })
+        except Exception:
+            pass
+
+        if len(overdue_tracker) > 0:
+            alerts.append({
+                'type': 'danger',
+                'message': f'{len(overdue_tracker)} overdue '
+                    f'loans require attention',
+                'category': 'overdue'
+            })
+        
+        try:
+            high_overdue = [o for o in overdue_tracker
+                            if o.get('days_overdue', 0) > 30]
+            if high_overdue:
+                alerts.append({
+                    'type': 'danger',
+                    'message': f'{len(high_overdue)} loans overdue '
+                        f'more than 30 days',
+                    'category': 'overdue_critical'
+                })
+        except Exception:
+            pass
+
+        return Response({
+            'branch_performance': branch_performance,
+            'staff_activity': staff_activity,
+            'field_officer_stats': field_officer_stats,
+            'manager_stats': manager_stats,
+            'finance_officer_stats': finance_stats,
+            'admin_stats': admin_stats,
+            'overdue_tracker': overdue_tracker,
+            'customer_growth': growth_data,
+            'collection_efficiency': collection_efficiency,
+            'avg_turnaround_days': avg_turnaround,
+            'cashflow_projection': cashflow_projection,
+            'alerts': alerts,
+        })

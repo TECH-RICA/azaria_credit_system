@@ -67,12 +67,12 @@ export const Card = ({ className, children }) => (
 /**
  * Table Component
  */
-export const Table = ({ headers, data, renderRow, className, maxHeight = "max-h-[600px]", initialCount = 10 }) => {
+export const Table = ({ headers, data, renderRow, className, maxHeight = "max-h-[600px]", initialCount = 10, disableLocalPagination = false }) => {
   const [displayCount, setDisplayCount] = React.useState(initialCount);
-  const hasMore = data && data.length > displayCount;
-  const showLess = displayCount > initialCount;
+  const hasMore = !disableLocalPagination && data && data.length > displayCount;
+  const showLess = !disableLocalPagination && displayCount > initialCount;
 
-  const visibleData = data ? data.slice(0, displayCount) : [];
+  const visibleData = data ? (disableLocalPagination ? data : data.slice(0, displayCount)) : [];
 
   return (
     <div className={cn("w-full overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 flex flex-col", className)}>
@@ -97,7 +97,7 @@ export const Table = ({ headers, data, renderRow, className, maxHeight = "max-h-
         </table>
       </div>
       
-      {(hasMore || showLess) && (
+      {!disableLocalPagination && (hasMore || showLess) && (
         <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/50 flex justify-center gap-4">
           {hasMore && (
             <button 

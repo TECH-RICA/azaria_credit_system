@@ -1,13 +1,30 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { format, differenceInMinutes, formatDistanceToNow, isAfter, subHours, subDays } from 'date-fns';
 import { loanService } from '../api/api';
-import { useAdmins } from '../hooks/useQueries';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
 import { Table, Button, Card } from '../components/ui/Shared';
-import { UserPlus, Shield, Activity, ShieldOff, Send } from 'lucide-react';
+import { UserPlus, Shield, Activity, ShieldOff, Send, ShieldAlert, Lock } from 'lucide-react';
 import AdminActivityModal from '../components/ui/AdminActivityModal';
 import DeactivationRequestModal from '../components/ui/DeactivationRequestModal';
 import BulkInviteModal from '../components/forms/BulkInviteModal';
 import DirectEmailModal from '../components/ui/DirectEmailModal';
 import { useAuth } from '../context/AuthContext';
+
+const formatLastActive = (lastLogin) => {
+  if (!lastLogin) return { label: 'Never Active', color: 'bg-slate-100 text-slate-500 border-slate-200' };
+  
+  const date = new Date(lastLogin);
+  const now = new Date();
+  const diffInMinutes = (now - date) / 1000 / 60;
+  
+  if (diffInMinutes < 5) return { label: 'Online Now', color: 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse' };
+  if (isAfter(date, subHours(now, 2))) return { label: 'Active recently', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+  if (isAfter(date, subHours(now, 24))) return { label: 'Active today', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+  if (isAfter(date, subDays(now, 7))) return { label: formatDistanceToNow(date) + ' ago', color: 'bg-slate-50 text-slate-600 border-slate-200' };
+  
+  return { label: format(date, 'MMM d, yyyy'), color: 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' };
+};
 
 const AdminOfficers = ({ role = 'FINANCIAL_OFFICER' }) => {
   const { user } = useAuth();
@@ -23,7 +40,25 @@ const AdminOfficers = ({ role = 'FINANCIAL_OFFICER' }) => {
   const [bulkEmail, setBulkEmail] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   
-  const [page, setPage] = useState(1);
+  const { 
+    data: officersData, 
+    isLoading: loading, 
+    isFetching,
+    error, 
+    hasMore, 
+    showMore: fetchNext, 
+    showLess,
+    reset 
+  } = usePaginatedQuery({
+    queryKey: ['admins', { role }],
+    queryFn: (params) => loanService.getAdmins({ ...params, role })
+  });
+
+  const officers = officersData || [];
+
+  useEffect(() => {
+    reset();
+  }, [role]);
 
   // Deactivation Request State
   const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
@@ -31,15 +66,6 @@ const AdminOfficers = ({ role = 'FINANCIAL_OFFICER' }) => {
   const [submittingDeactivation, setSubmittingDeactivation] = useState(false);
 
   const userRole = user?.role || user?.admin?.role;
-
-  const { data: adminsData, isLoading: loading, error } = useAdmins({ role, page, page_size: 10 });
-  
-  const hasMore = useMemo(() => !!adminsData?.next, [adminsData]);
-
-  const officers = useMemo(() => {
-    const data = adminsData?.results || adminsData || [];
-    return Array.isArray(data) ? data.filter(a => a.role === role) : [];
-  }, [adminsData, role]);
 
   const handleDeactivationSubmit = async (officerId, reason) => {
     setSubmittingDeactivation(true);
@@ -117,79 +143,108 @@ const AdminOfficers = ({ role = 'FINANCIAL_OFFICER' }) => {
       ) : (
         <Card className="p-0 overflow-hidden">
           <Table
-            headers={['Name', 'Email', 'Phone', 'Status', 'Actions']}
+            headers={['Name', 'Email/Phone', 'Branch', 'Last Active', 'Status', 'Actions']}
             data={officers}
             initialCount={10}
             maxHeight="max-h-[500px]"
-            renderRow={(officer) => (
-              <tr key={officer.id} className="hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{officer.full_name}</td>
-                <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{officer.email}</td>
-                <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{officer.phone || '-'}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center text-xs text-indigo-600 font-medium">
-                    <Shield className="w-3 h-3 mr-1" />
-                    {officer.is_verified ? 'Verified' : 'Pending'}
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-right flex items-center justify-end gap-3">
-                  <button 
-                      onClick={() => {
-                          setEmailTargets(officer);
-                          setBulkEmail(false);
-                          setShowEmail(true);
-                      }}
-                      className="p-2 text-slate-400 hover:text-primary-600 transition-colors"
-                      title="Send Official Email"
-                  >
-                      <Send className="w-4 h-4" />
-                  </button>
-                  <button 
-                      onClick={() => {
-                          setSelectedAdmin({...officer, role});
-                          setShowActivity(true);
-                      }}
-                      className="flex items-center gap-1 text-slate-500 hover:text-primary-600 transition-colors"
-                      title="View Activity"
-                  >
-                      <Activity className="w-4 h-4" />
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (userRole === 'MANAGER') {
-                        setOfficerToDeactivate(officer);
-                        setIsDeactivateModalOpen(true);
-                      } else if (window.confirm(`Are you sure you want to deactivate ${officer.full_name}? They will be immediately logged out.`)) {
-                        loanService.updateAdmin(officer.id, { is_blocked: true })
-                          .then(() => {
-                            alert("Officer deactivated successfully.");
-                            window.location.reload();
-                          })
-                          .catch(err => alert("Error: " + (err.response?.data?.error || err.message)));
-                      }
-                    }}
-                    className="text-rose-600 hover:text-rose-700 text-sm font-medium"
-                  >
-                    {userRole === 'MANAGER' ? 'Request Suspension' : 'Deactivate'}
-                  </button>
-                </td>
-              </tr>
-            )}
+            disableLocalPagination={true}
+            renderRow={(officer) => {
+              const diff = officer.last_login_at && officer.last_logout_at ? differenceInMinutes(new Date(officer.last_logout_at), new Date(officer.last_login_at)) : null;
+              const duration = diff !== null ? `${Math.floor(diff / 60)}h ${diff % 60}m` : null;
+              const statusInfo = formatLastActive(officer.last_login_at);
+
+              return (
+                <tr key={officer.id} className="hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-slate-900 dark:text-white text-sm">{officer.full_name}</p>
+                    <p className="text-[10px] text-slate-400 font-medium">#{officer.id.slice(0, 8)}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-xs text-slate-600 dark:text-slate-400">{officer.email}</p>
+                    <p className="text-[10px] text-slate-400">{officer.phone || '-'}</p>
+                  </td>
+                  <td className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {officer.branch_name || officer.branch || 'Unassigned'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-col gap-1">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${statusInfo.color}`}>
+                        {statusInfo.label}
+                      </span>
+                      {officer.failed_login_attempts > 0 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 text-[9px] font-black uppercase ring-1 ring-red-100 w-fit">
+                            <ShieldAlert className="w-2.5 h-2.5 mr-0.5" />
+                            {officer.failed_login_attempts} Failed
+                          </span>
+                      )}
+                      {officer.is_locked_out && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase w-fit">
+                          <Lock className="w-2.5 h-2.5 mr-0.5" />
+                          LOCKED
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center text-xs text-indigo-600 font-medium">
+                      <Shield className="w-3 h-3 mr-1" />
+                      {officer.is_verified ? 'Verified' : 'Pending'}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-3">
+                      <button 
+                          onClick={() => {
+                              setEmailTargets(officer);
+                              setBulkEmail(false);
+                              setShowEmail(true);
+                          }}
+                          className="p-2 text-slate-400 hover:text-primary-600 transition-colors"
+                          title="Send Official Email"
+                      >
+                          <Send className="w-4 h-4" />
+                      </button>
+                      <button 
+                          onClick={() => {
+                              setSelectedAdmin({...officer, role});
+                              setShowActivity(true);
+                          }}
+                          className="flex items-center gap-1 text-slate-500 hover:text-primary-600 transition-colors"
+                          title="View Activity"
+                      >
+                          <Activity className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (userRole === 'MANAGER') {
+                            setOfficerToDeactivate(officer);
+                            setIsDeactivateModalOpen(true);
+                          } else if (window.confirm(`Are you sure you want to deactivate ${officer.full_name}? They will be immediately logged out.`)) {
+                            loanService.updateAdmin(officer.id, { is_blocked: true })
+                              .then(() => {
+                                alert("Officer deactivated successfully.");
+                                window.location.reload();
+                              })
+                              .catch(err => alert("Error: " + (err.response?.data?.error || err.message)));
+                          }
+                        }}
+                        className="text-rose-600 hover:text-rose-700 text-sm font-medium"
+                      >
+                        {userRole === 'MANAGER' ? 'Request Suspension' : 'Deactivate'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            }}
           />
-          {hasMore && (
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-center">
-              <Button 
-                variant="secondary" 
-                onClick={() => {
-                  setPage(p => p + 1);
-                }}
-                disabled={loading}
-                className="px-8 font-black uppercase tracking-widest text-xs"
-              >
-                {loading ? 'Processing...' : `Load More ${role === 'FIELD_OFFICER' ? 'Field' : 'Finance'} Officers`}
-              </Button>
-            </div>
-          )}
+          <PaginationFooter
+            resultsCount={officers.length}
+            hasMore={hasMore}
+            isLoading={isFetching}
+            onShowMore={fetchNext}
+            onShowLess={showLess}
+          />
         </Card>
       )}
 

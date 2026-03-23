@@ -25,12 +25,14 @@ import { Zap } from 'lucide-react';
 
 const AdminDashboard = () => {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, activeRole } = useAuth();
   const navigate = useNavigate();
 
-  const isOwner = user?.is_owner || user?.role === 'OWNER';
-  const isSuperAdmin = user?.is_super_admin || user?.role === 'SUPER_ADMIN';
-  const isAnyAdmin = isOwner || isSuperAdmin || user?.role === 'ADMIN';
+  const effectiveRole = activeRole || user?.role;
+  const isOwner = user?.is_owner || effectiveRole === 'OWNER';
+  const isSuperAdmin = user?.is_super_admin || effectiveRole === 'SUPER_ADMIN';
+  const isAdmin = effectiveRole === 'ADMIN';
+  const isAnyAdmin = isOwner || isSuperAdmin || isAdmin;
 
   // Helper for role-protected routes
   const RoleRoute = ({ children, allowed }) => {
@@ -93,51 +95,70 @@ const AdminDashboard = () => {
           <Route index element={<AdminOverview />} />
           <Route path="dashboard" element={<AdminOverview />} />
           
-          {/* Owner/SuperAdmin Restricted */}
           <Route path="super-admins" element={
-            <RoleRoute allowed={isOwner || isSuperAdmin}>
+            <RoleRoute allowed={isOwner}>
               <SuperAdminPage />
             </RoleRoute>
           } />
+          
           <Route path="security-threats" element={
             <RoleRoute allowed={isOwner || isSuperAdmin}>
               <SecurityThreatsPage />
             </RoleRoute>
           } />
           
-          {/* SuperAdmin/Owner Restricted (Admins can't see accounts) */}
           <Route path="accounts" element={
             <RoleRoute allowed={isOwner || isSuperAdmin}>
               <AdminAccounts />
             </RoleRoute>
           } />
+
           <Route path="settings" element={
-            <RoleRoute allowed={isOwner || isSuperAdmin}>
+            <RoleRoute allowed={isAnyAdmin}>
               <AdminSettings />
             </RoleRoute>
           } />
 
-          {/* Owner Only */}
+          <Route path="managers" element={
+            <RoleRoute allowed={isAnyAdmin}>
+              <AdminManagers />
+            </RoleRoute>
+          } />
+
+          <Route path="finance-officers" element={
+            <RoleRoute allowed={isOwner || isSuperAdmin}>
+              <AdminOfficers role="FINANCIAL_OFFICER" />
+            </RoleRoute>
+          } />
+
+          <Route path="field-officers" element={
+            <RoleRoute allowed={isAnyAdmin}>
+              <AdminOfficers role="FIELD_OFFICER" />
+            </RoleRoute>
+          } />
+          
+          <Route path="audit" element={
+            <RoleRoute allowed={isAnyAdmin}>
+              <AdminAuditLogs />
+            </RoleRoute>
+          } />
+
+          <Route path="security-logs" element={
+            <RoleRoute allowed={isOwner || isSuperAdmin}>
+              <SecurityLogsPage />
+            </RoleRoute>
+          } />
+
           <Route path="owner-audit" element={
             <RoleRoute allowed={isOwner}>
               <OwnerAuditPage />
             </RoleRoute>
           } />
 
-          {/* Regular Admin+ Access */}
-          <Route path="managers" element={<AdminManagers />} />
-          <Route path="finance-officers" element={<AdminOfficers role="FINANCIAL_OFFICER" />} />
-          <Route path="field-officers" element={<AdminOfficers role="FIELD_OFFICER" />} />
           <Route path="customers" element={<AdminCustomers />} />
           <Route path="loans" element={<AdminLoans />} />
           <Route path="deactivations" element={<AdminDeactivations />} />
           <Route path="branches" element={<BranchManagement />} />
-          <Route path="audit" element={<AdminAuditLogs />} />
-          <Route path="security-logs" element={
-            <RoleRoute allowed={isOwner || isSuperAdmin}>
-              <SecurityLogsPage />
-            </RoleRoute>
-          } />
           <Route path="customer-communicator" element={<CustomerCommunicator />} />
           <Route path="official-communicator" element={<OfficialCommunicator />} />
           <Route path="profile" element={<ProfileSettings />} />

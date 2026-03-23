@@ -1,15 +1,19 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { loanService } from '../api/api';
-import { useLoans, useCustomers, useInvalidate } from '../hooks/useQueries';
+import { useInvalidate, useBranches, useCustomers } from '../hooks/useQueries';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
 import { Card, Table, Button } from '../components/ui/Shared';
-import { Search, Filter, Calendar, Download, Eye, CheckCircle, XCircle, Clock, MessageSquareShare, FileCheck } from 'lucide-react';
+import { Search, Filter, Calendar, Download, Eye, CheckCircle, XCircle, Clock, MessageSquareShare, FileCheck, Building2, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import DateRangeFilter from '../components/ui/DateRangeFilter';
+import ExportButton from '../components/ui/ExportButton';
 import BulkCustomerSMSModal from '../components/ui/BulkCustomerSMSModal';
 import CustomerHistoryModal from '../components/ui/CustomerHistoryModal';
 import ChecklistModal from '../components/ui/ChecklistModal';
 import useDebounce from '../hooks/useDebounce';
 
-const FilterBar = ({ searchTerm, setSearchTerm, filterProduct, setFilterProduct, filterStatus, setFilterStatus, uniqueProducts, activeTab, startDate, setStartDate, endDate, setEndDate }) => (
+const FilterBar = ({ searchTerm, setSearchTerm, filterProduct, setFilterProduct, filterStatus, setFilterStatus, uniqueProducts, activeTab, dateRange, setDateRange, branchFilter, setBranchFilter, branches }) => (
   <Card className="p-0 overflow-hidden border-none shadow-sm dark:bg-slate-900">
     <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 flex flex-col lg:flex-row gap-4">
       <div className="relative flex-1">
@@ -22,22 +26,23 @@ const FilterBar = ({ searchTerm, setSearchTerm, filterProduct, setFilterProduct,
         />
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg px-2 py-1">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <input 
-            type="date" 
-            value={startDate} 
-            onChange={(e) => setStartDate(e.target.value)}
-            className="bg-transparent text-xs outline-none dark:text-white uppercase font-bold"
-          />
-          <span className="text-slate-300">-</span>
-          <input 
-            type="date" 
-            value={endDate} 
-            onChange={(e) => setEndDate(e.target.value)}
-            className="bg-transparent text-xs outline-none dark:text-white uppercase font-bold"
-          />
+        <div className="relative group min-w-[160px]">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+            <Building2 className="w-4 h-4 text-primary-500" />
+          </div>
+          <select 
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-10 py-2.5 text-sm bg-white dark:bg-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 font-bold uppercase tracking-tight appearance-none shadow-sm transition-all hover:border-primary-300"
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+          >
+            <option value="all">ALL BRANCHES</option>
+            {Array.isArray(branches) && branches.map(b => (
+              <option key={b.id} value={b.id}>{b.name.toUpperCase()}</option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-primary-500 transition-colors" />
         </div>
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
         <select 
           className="border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-primary-500 font-bold"
           value={filterProduct}
@@ -90,31 +95,44 @@ const AdminLoans = () => {
   const [updatingId, setUpdatingId] = useState(null);
   const [showApprovalChecklist, setShowApprovalChecklist] = useState(false);
   const [loanPendingApproval, setLoanPendingApproval] = useState(null);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  
-  const [page, setPage] = useState(1);
-
-  const { data: loansData, isLoading: loansLoading } = useLoans({ 
-    page, 
-    page_size: 10,
-    search: debouncedSearch,
-    status: filterStatus !== 'ALL' ? filterStatus : undefined
-  });
-
-  const { data: customersData } = useCustomers({ page_size: 1000 });
-
-  const loans = loansData?.results || loansData || [];
-  const hasMore = !!loansData?.next;
-  const loading = loansLoading;
-
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  const [branchFilter, setBranchFilter] = useState('all');
+  const { data: branchesData } = useBranches();
+  const { data: customersData } = useCustomers();
   const customers = useMemo(() => {
     const list = customersData?.results || customersData || [];
-    return list.reduce((acc, c) => {
-      acc[c.id] = c;
-      return acc;
-    }, {});
+    return list.reduce((acc, curr) => ({ ...acc, [curr.id]: curr }), {});
   }, [customersData]);
+  
+  const branches = branchesData?.results || branchesData || [];
+  
+  const {
+    data: loans,
+    isLoading: loading,
+    isFetching,
+    hasMore,
+    canShowLess,
+    showMore,
+    showLess,
+    totalCount,
+    reset,
+  } = usePaginatedQuery({
+    queryKey: ['loans'],
+    queryFn: (params) => loanService.getLoans(params),
+    pageSize: 10,
+    params: {
+      search: debouncedSearch,
+      status: filterStatus !== 'ALL' ? filterStatus : undefined,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined,
+      branch: branchFilter === 'all' ? undefined : branchFilter,
+      activeTab: activeTab, // To invalidate correctly when tab changes if needed
+    }
+  });
+
+  useEffect(() => {
+    reset();
+  }, [debouncedSearch, filterStatus, dateRange, branchFilter, activeTab, reset]);
 
   const handleStatusUpdate = async (loanId, newStatus) => {
     setUpdatingId(loanId);
@@ -173,12 +191,15 @@ const AdminLoans = () => {
                           (loan.product_name || '').toLowerCase().includes(debouncedSearch.toLowerCase());
       
       // Date filter
-      if (startDate && new Date(loan.created_at) < new Date(startDate)) return false;
-      if (endDate) {
-        const end = new Date(endDate);
+      if (dateRange.from && new Date(loan.created_at) < new Date(dateRange.from)) return false;
+      if (dateRange.to) {
+        const end = new Date(dateRange.to);
         end.setHours(23, 59, 59, 999);
         if (new Date(loan.created_at) > end) return false;
       }
+
+      // Branch filter (Local filter for non-paginated results or extra safety)
+      if (branchFilter !== 'all' && loan.branch !== branchFilter) return false;
 
       return matchesStatus && matchesProduct && matchesSearch;
     });
@@ -192,7 +213,7 @@ const AdminLoans = () => {
     }
 
     return result;
-  }, [loans, activeTab, filterStatus, filterProduct, debouncedSearch, customers, startDate, endDate]);
+  }, [loans, activeTab, filterStatus, filterProduct, debouncedSearch, customers, dateRange]);
 
   const getTotals = (loansList) => {
     return loansList.reduce((acc, loan) => {
@@ -257,7 +278,14 @@ const AdminLoans = () => {
           <p className="text-sm text-slate-500">Track lifecycle from verification to disbursement</p>
         </div>
         <div className="flex gap-2">
-           {(user?.role === 'FINANCIAL_OFFICER' || user?.role === 'FINANCE_OFFICER' || user?.god_mode_enabled) && (
+           {user?.is_owner && (
+             <ExportButton 
+               resource="loans"
+               dateRange={dateRange}
+               filename={`all_loans_export_${new Date().toISOString().split('T')[0]}.csv`}
+             />
+           )}
+           {(user?.role === 'FINANCE_OFFICER' || user?.role === 'FINANCIAL_OFFICER') && (
              <Button 
                variant="primary" 
                className="bg-emerald-600 hover:bg-emerald-700 flex items-center gap-2 shadow-lg shadow-emerald-500/20 px-6 py-2"
@@ -281,7 +309,7 @@ const AdminLoans = () => {
       <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
         {[
           { id: 'ACTIVE', label: 'Disbursed Portfolio', icon: CheckCircle },
-          { id: 'PENDING', label: 'Pending Apps', icon: Clock },
+          { id: 'PENDING', label: 'Approval Queue', icon: Clock },
           { id: 'REJECTED', label: 'Rejected', icon: XCircle }
         ].map(tab => (
           <button
@@ -319,18 +347,20 @@ const AdminLoans = () => {
         setFilterStatus={setFilterStatus}
         uniqueProducts={uniqueProducts}
         activeTab={activeTab}
-        startDate={startDate}
-        setStartDate={setStartDate}
-        endDate={endDate}
-        setEndDate={setEndDate}
+        dateRange={dateRange}
+        setDateRange={setDateRange}
+        branchFilter={branchFilter}
+        setBranchFilter={setBranchFilter}
+        branches={branches}
       />
 
       <Card className="p-0 overflow-hidden">
         <Table
           headers={['Loan ID', 'Customer Profile', 'Product', 'Principal', 'Repayable', 'Submitted', 'Status', 'Actions']}
-          data={processedLoans}
+          data={loans}
           initialCount={10}
           maxHeight="max-h-[500px]"
+          disableLocalPagination={true}
           renderRow={(loan) => (
             <tr key={loan.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors group">
               <td className="px-6 py-4">
@@ -369,7 +399,7 @@ const AdminLoans = () => {
                       <div className="animate-spin w-4 h-4 border-2 border-primary-600 border-t-transparent rounded-full mr-2" />
                   ) : (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {loan.status === 'UNVERIFIED' && (
+                      {loan.status === 'UNVERIFIED' && !user?.is_owner && (
                         <button 
                           onClick={() => {
                             setSelectedCustomer(customers[loan.user]);
@@ -381,7 +411,7 @@ const AdminLoans = () => {
                           REVIEW
                         </button>
                       )}
-                      {loan.status === 'VERIFIED' && (
+                      {loan.status === 'VERIFIED' && !user?.is_owner && (
                         <button 
                           onClick={() => {
                             setLoanPendingApproval(loan.id);
@@ -392,7 +422,7 @@ const AdminLoans = () => {
                           APPROVE
                         </button>
                       )}
-                        {loan.status === 'APPROVED' && user?.god_mode_enabled && (
+                        {(loan.status === 'APPROVED' || (loan.status === 'VERIFIED' && user?.role === 'FINANCE_OFFICER')) && !user?.is_owner && (user?.role === 'FINANCE_OFFICER' || user?.god_mode_enabled) && (
                         <button 
                           onClick={() => handleDisbursement(loan.id)}
                           className="p-1 px-2 text-[10px] font-bold bg-purple-50 text-purple-600 rounded hover:bg-purple-600 hover:text-white transition-colors border border-purple-200"
@@ -400,7 +430,7 @@ const AdminLoans = () => {
                           DISBURSE
                         </button>
                       )}
-                      {['UNVERIFIED', 'VERIFIED'].includes(loan.status) && (
+                      {['UNVERIFIED', 'VERIFIED'].includes(loan.status) && !user?.is_owner && (
                         <button 
                           onClick={() => handleStatusUpdate(loan.id, 'REJECTED')}
                           className="p-1 px-2 text-[10px] font-bold bg-rose-50 text-rose-600 rounded hover:bg-rose-600 hover:text-white transition-colors border border-rose-200"
@@ -425,21 +455,15 @@ const AdminLoans = () => {
             </tr>
           )}
         />
-        {hasMore && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-center">
-            <Button 
-              variant="secondary" 
-              onClick={() => {
-                const nextPage = page + 1;
-                setPage(nextPage);
-              }}
-              disabled={loading}
-              className="px-8 font-black uppercase tracking-widest text-xs"
-            >
-              {loading ? 'Processing...' : 'Load More Applications'}
-            </Button>
-          </div>
-        )}
+        <PaginationFooter
+          hasMore={hasMore}
+          canShowLess={canShowLess}
+          onShowMore={showMore}
+          onShowLess={showLess}
+          isFetching={isFetching}
+          totalCount={totalCount}
+          currentCount={loans.length}
+        />
       </Card>
 
       <BulkCustomerSMSModal 

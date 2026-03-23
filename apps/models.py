@@ -9,7 +9,7 @@ class Branch(models.Model):
     location = models.TextField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -64,11 +64,21 @@ class Admins(models.Model):
     is_two_factor_enabled = models.BooleanField(default=False)
     lockout_until = models.DateTimeField(null=True, blank=True)
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    last_logout_at = models.DateTimeField(null=True, blank=True)
+    login_count = models.IntegerField(default=0)
     is_primary_owner = models.BooleanField(default=False)  # Only the very first owner ever created
+    god_mode_granted_by = models.ForeignKey(
+        'self',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='god_mode_grants'
+    )
+    god_mode_granted_at = models.DateTimeField(null=True, blank=True)
     ownership_granted_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='owners_created')
     ownership_granted_at = models.DateTimeField(null=True, blank=True)
     ownership_relinquished_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     class Meta:
         managed = True
@@ -106,7 +116,7 @@ class AdminInvitation(models.Model):
     )
     is_used = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -129,7 +139,7 @@ class AuditLogs(models.Model):
     old_data = models.JSONField(blank=True, null=True)
     new_data = models.JSONField(blank=True, null=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     class Meta:
         managed = True
@@ -157,7 +167,7 @@ class PaybillTransaction(models.Model):
     assigned_at = models.DateTimeField(null=True, blank=True)
     contact_attempted = models.BooleanField(default=False)
     notes = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = 'paybill_transactions'
@@ -187,7 +197,7 @@ class LoanProducts(models.Model):
     )
     duration_months = models.IntegerField(null=True, blank=True)
     duration_weeks = models.IntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     class Meta:
         managed = True
@@ -228,7 +238,7 @@ class Loans(models.Model):
         Admins, models.SET_NULL, null=True, blank=True, related_name="modified_loans"
     )
     disbursed_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
@@ -376,7 +386,7 @@ class Notifications(models.Model):
     user = models.ForeignKey("Users", models.DO_NOTHING)
     message = models.TextField()
     is_read = models.BooleanField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     class Meta:
         managed = True
@@ -401,7 +411,7 @@ class Repayments(models.Model):
     loan = models.ForeignKey(Loans, models.DO_NOTHING)
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.TextField(blank=True, null=True)
-    payment_date = models.DateTimeField(auto_now_add=True, null=True)
+    payment_date = models.DateTimeField(default=timezone.now, null=True)
     reference_code = models.TextField(unique=True, blank=True, null=True)
 
     class Meta:
@@ -417,7 +427,7 @@ class Transactions(models.Model):
     user = models.ForeignKey("Users", models.DO_NOTHING)
     type = models.TextField()
     amount = models.DecimalField(max_digits=12, decimal_places=2)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     class Meta:
         managed = True
@@ -435,7 +445,7 @@ class SMSLog(models.Model):
     message = models.TextField()
     type = models.CharField(max_length=50)  # DEFAULTER, REPAID, NOTICE, etc.
     status = models.CharField(max_length=20, default="SENT")
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -451,7 +461,7 @@ class EmailLog(models.Model):
     message = models.TextField()
     status = models.CharField(max_length=20, default="SENT")
     error_details = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -482,7 +492,7 @@ class UserProfiles(models.Model):
     )
     profile_image = models.ImageField(upload_to="profiles/", blank=True, null=True)
     national_id_image = models.ImageField(upload_to="ids/", blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
 
     def get_safe_loan_limit(self, duration_months=12, annual_interest_rate=15):
         if not self.monthly_income or self.monthly_income <= 0:
@@ -512,9 +522,10 @@ class Users(models.Model):
     created_by = models.ForeignKey(
         Admins, models.SET_NULL, null=True, blank=True, related_name="registered_users"
     )
+    god_mode_registered = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
     is_locked = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, null=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
@@ -528,7 +539,7 @@ class Guarantors(models.Model):
     full_name = models.TextField()
     national_id = models.CharField(max_length=50)
     phone = models.CharField(max_length=20)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -544,7 +555,7 @@ class MpesaPayments(models.Model):
     status = models.CharField(max_length=20, default="PENDING")
     mpesa_receipt_number = models.CharField(max_length=50, blank=True, null=True)
     result_desc = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -558,7 +569,7 @@ class Reports(models.Model):
     generated_by = models.ForeignKey(Admins, models.DO_NOTHING)
     file_path = models.TextField(blank=True, null=True)
     data_snapshot = models.JSONField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -580,7 +591,7 @@ class StaffAssignments(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     staff = models.ForeignKey(Admins, models.DO_NOTHING, related_name="assignments")
     user = models.ForeignKey(Users, models.DO_NOTHING, related_name="assigned_staff")
-    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -608,7 +619,7 @@ class DeactivationRequest(models.Model):
         related_name="processed_requests",
     )
     processed_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -621,7 +632,7 @@ class LoanDocuments(models.Model):
     name = models.TextField()
     file_path = models.TextField()
     doc_type = models.CharField(max_length=50)
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -634,7 +645,7 @@ class LoanActivity(models.Model):
     admin = models.ForeignKey(Admins, models.SET_NULL, null=True)
     action = models.TextField()
     note = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -645,7 +656,7 @@ class SystemCapital(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True)
     balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -667,7 +678,7 @@ class LedgerEntry(models.Model):
     loan = models.ForeignKey(Loans, on_delete=models.SET_NULL, null=True, blank=True)
     reference_id = models.CharField(max_length=100, blank=True, null=True)
     note = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = True
@@ -680,7 +691,7 @@ class CustomerDraft(models.Model):
     incomplete_reason = models.CharField(max_length=100)
     notes = models.TextField(blank=True, null=True)
     is_completed = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

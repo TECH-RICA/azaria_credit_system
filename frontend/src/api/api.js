@@ -68,12 +68,35 @@ export const loanService = {
     const res = await api.post('/auth/login/', credentials);
     return res.data;
   },
+  logout: async () => {
+    try {
+      await api.post('/auth/logout/');
+    } catch (e) {
+      // Silent fail — always clear local state
+    }
+  },
   verify2FA: async (data) => {
     const res = await api.post('/auth/2fa/verify/', data);
     return res.data;
   },
   getLoans: async (params = {}) => {
     const res = await api.get('/loans/', { params: { limit: 20, ...params } });
+    return res.data;
+  },
+  getManagerQueue: async (params = {}) => {
+    // We map 'tab' to 'status' because the backend filters on status
+    const queryParams = { ...params };
+    if (queryParams.tab) {
+      if (queryParams.tab === 'QUEUE') {
+        queryParams.status = 'UNVERIFIED,PENDING,FIELD_VERIFIED'; 
+        queryParams.ordering = 'created_at'; // Make Review Queue Oldest First
+      } else {
+        queryParams.status = queryParams.tab;
+        queryParams.ordering = '-created_at';
+      }
+      delete queryParams.tab;
+    }
+    const res = await api.get('/loans/', { params: { limit: 20, ...queryParams } });
     return res.data;
   },
   getCustomers: async (params = {}) => {
@@ -98,6 +121,10 @@ export const loanService = {
   },
   updateSecureSetting: async (key, value, group) => {
     const res = await api.post('/settings/secure/', { key, encrypted_value: value, setting_group: group });
+    return res.data;
+  },
+  getSystemHealth: async () => {
+    const res = await api.get('/health/');
     return res.data;
   },
   revealSecureSetting: async (key) => {
@@ -127,6 +154,10 @@ export const loanService = {
   },
   getOwnership: async () => {
     const res = await api.get('/ownership/');
+    return res.data;
+  },
+  toggleGodMode: async (data) => {
+    const res = await api.post('/auth/god-mode/toggle/', data);
     return res.data;
   },
   getAllAdmins: async () => {
@@ -163,6 +194,10 @@ export const loanService = {
   },
   inviteAdmin: async (data) => {
     const res = await api.post('/admins/invite/', data);
+    return res.data;
+  },
+  getAdmins: async (params = {}) => {
+    const res = await api.get('/admins/', { params });
     return res.data;
   },
   // Loan Products
@@ -206,6 +241,14 @@ export const loanService = {
     const res = await api.post('/deactivation-requests/', data);
     return res.data;
   },
+  getDeactivationRequests: async (params = {}) => {
+    const res = await api.get('/deactivation-requests/', { params });
+    return res.data;
+  },
+  updateDeactivationRequest: async (id, data) => {
+    const res = await api.patch(`/deactivation-requests/${id}/`, data);
+    return res.data;
+  },
   sendEmailNotification: async (data) => {
     const res = await api.post('/notifications/send-email/', data);
     return res.data;
@@ -216,6 +259,13 @@ export const loanService = {
   },
   sendDirectSMS: async (data) => {
     const res = await api.post('/loans/direct-sms/', data);
+    return res.data;
+  },
+  exportData: async (params = {}) => {
+    const res = await api.get('/export/', { 
+      params,
+      responseType: 'blob'
+    });
     return res.data;
   },
   // Mapping branch methods into loanService for backward compatibility with old components

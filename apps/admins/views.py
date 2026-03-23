@@ -262,9 +262,15 @@ class BranchDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminUser]
 
     def perform_update(self, serializer):
-        old_data = BranchSerializer(self.get_object()).data
+        instance = self.get_object()
+        old_name = instance.name
+        new_name = serializer.validated_data.get('name', old_name)
+        
+        old_data = BranchSerializer(instance).data
         branch = serializer.save()
-        log_action(self.request.user, "UPDATE", "branches", branch.id, old_data=old_data, new_data=serializer.data)
+        
+        if old_name != new_name:
+            log_action(self.request.user, "UPDATE", "branches", branch.id, old_data=old_data, new_data=serializer.data)
 
     def perform_destroy(self, instance):
         if instance.branch_admins.exists() or instance.branch_loans.exists():

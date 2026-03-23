@@ -83,7 +83,7 @@ const FinanceAnalytics = () => {
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   formatter={(val) => [`KES ${val.toLocaleString()}`, 'Volume']}
                 />
-                <Bar dataKey="total" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="amount" fill="#10b981" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -102,7 +102,7 @@ const FinanceAnalytics = () => {
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   formatter={(val) => [`KES ${val.toLocaleString()}`, 'Volume']}
                 />
-                <Bar dataKey="total" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="amount" fill="#4f46e5" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -4,13 +4,14 @@ import { useSecurityLogs } from '../../hooks/useQueries';
 import { Card, Button, Table } from '../../components/ui/Shared';
 import { Shield, AlertTriangle, Search, Filter, Mail, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
+import DateRangeFilter from '../../components/ui/DateRangeFilter';
+import ExportButton from '../../components/ui/ExportButton';
 
 const SecurityLogsPage = () => {
   const [search, setSearch] = useState('');
   const [emailSearch, setEmailSearch] = useState('');
   const [filterType, setFilterType] = useState('ALL');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [displayCount, setDisplayCount] = useState(10);
 
   const { data: logsData, isLoading: loading } = useSecurityLogs();
@@ -40,38 +41,43 @@ const SecurityLogsPage = () => {
     if (filterType !== 'ALL') result = result.filter(log => log.log_type === filterType);
 
     // 4. Date range
-    if (dateFrom) {
-      const startOfDay = new Date(dateFrom);
+    if (dateRange.from) {
+      const startOfDay = new Date(dateRange.from);
       startOfDay.setHours(0, 0, 0, 0);
       result = result.filter(log => new Date(log.created_at) >= startOfDay);
     }
-    if (dateTo) {
-      const endOfDay = new Date(dateTo);
+    if (dateRange.to) {
+      const endOfDay = new Date(dateRange.to);
       endOfDay.setHours(23, 59, 59, 999);
       result = result.filter(log => new Date(log.created_at) <= endOfDay);
     }
 
     return result;
-  }, [logs, search, emailSearch, filterType, dateFrom, dateTo]);
+  }, [logs, search, emailSearch, filterType, dateRange]);
 
   const visibleLogs = processedLogs.slice(0, displayCount);
   const hasMore = processedLogs.length > displayCount;
 
   return (
-    <div className="space-y-6" onContextMenu={(e) => e.preventDefault()}>
+    <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Shield className="w-6 h-6 text-red-500" />
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Security Logs</h2>
-            <p className="text-sm text-slate-500 mt-1">System security events — read only, no export</p>
+            <p className="text-sm text-slate-500 mt-1">System security events and access logs</p>
           </div>
         </div>
+        <ExportButton 
+          resource="security_logs" 
+          dateRange={dateRange} 
+          filename={`security_audit_${new Date().toISOString().split('T')[0]}.csv`}
+        />
       </div>
 
-      <div className="p-3 bg-rose-50/50 dark:bg-rose-900/10 border border-rose-100 dark:border-rose-900/20 rounded-xl flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-        <p className="text-xs text-rose-700 dark:text-rose-400 font-bold uppercase tracking-tight">Security logs cannot be exported. All viewing activity is audited in real-time.</p>
+      <div className="p-3 bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/20 rounded-xl flex items-center gap-2">
+        <Shield className="w-4 h-4 text-emerald-500 shrink-0" />
+        <p className="text-xs text-emerald-700 dark:text-emerald-400 font-bold uppercase tracking-tight">Authorised Owner view. All exports and access events are recorded for compliance.</p>
       </div>
 
       {/* Filter Bar */}
@@ -112,22 +118,7 @@ const SecurityLogsPage = () => {
           </select>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800 group focus-within:ring-2 focus-within:ring-primary-500/20 transition-all">
-          <Calendar className="w-4 h-4 text-slate-400 group-focus-within:text-primary-500" />
-          <input 
-            type="date" 
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="bg-transparent border-none text-[10px] font-bold py-0.5 focus:ring-0 outline-none text-slate-600 dark:text-slate-300 uppercase"
-          />
-          <span className="text-slate-300 font-light px-1">|</span>
-          <input 
-            type="date" 
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="bg-transparent border-none text-[10px] font-bold py-0.5 focus:ring-0 outline-none text-slate-600 dark:text-slate-300 uppercase"
-          />
-        </div>
+        <DateRangeFilter onChange={setDateRange} />
       </div>
 
       <Card className="p-0 overflow-hidden border-none shadow-xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">

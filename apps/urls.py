@@ -22,6 +22,7 @@ from .views import (
     AdminRevokeView,
     SystemCapitalBalanceView as CapitalBalanceView,
     RegisterAdminView,
+    LogoutView,
     VerifyEmailView,
     RequestPasswordResetView,
     ConfirmPasswordResetView,
@@ -36,6 +37,7 @@ from .views import (
     NotificationUpdateView,
     LoanAnalyticsView,
     FinanceAnalyticsView,
+    OwnerAnalyticsView,
     MpesaRepaymentView,
     MpesaDisbursementView,
     MpesaCallbackView,
@@ -66,9 +68,17 @@ from .views import (
     OwnershipRelinquishView,
     OwnershipHandoverView,
     SecurityThreatsView,
+    SystemHealthView,
+    OwnerExportView,
+    HierarchicalSecurityAlertsView,
+    LogoutView,
 )
 
 urlpatterns = [
+    path("team-security-alerts/", HierarchicalSecurityAlertsView.as_view(), name="team-security-alerts"),
+    path("export/", OwnerExportView.as_view(), name="owner-export"),
+    path("health/", SystemHealthView.as_view(), name="system-health"),
+    path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/owner-exists/", OwnerExistsView.as_view(), name="owner-exists"),
     path("auth/claim-ownership/", ClaimOwnershipView.as_view(), name="claim-ownership"),
     path("auth/god-mode/toggle/", GodModeToggleView.as_view(), name="god-mode-toggle"),
@@ -124,6 +134,7 @@ urlpatterns = [
     path(
         "finance/analytics/", FinanceAnalyticsView.as_view(), name="finance-analytics"
     ),
+    path('owner/analytics/', OwnerAnalyticsView.as_view(), name='owner-analytics'),
     path("auth/login/", LoginView.as_view(), name="login"),
     path("security-threats/", SecurityThreatsView.as_view(), name="security-threats"),
     path("auth/register/", RegisterAdminView.as_view(), name="register"),

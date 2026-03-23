@@ -35,7 +35,21 @@ class LoanListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return get_filtered_queryset(self.request.user, Loans.objects.select_related("user", "user__profile", "loan_product"), 'branch').order_by("-created_at")
+        qs = get_filtered_queryset(self.request.user, Loans.objects.select_related("user", "user__profile", "loan_product"), 'user__profile__branch_fk', request=self.request)
+        
+        # Additional Filters
+        status = self.request.query_params.get('status')
+        if status:
+            statuses = [s.strip() for s in status.split(',') if s.strip()]
+            qs = qs.filter(status__in=statuses)
+            
+        ordering = self.request.query_params.get('ordering', '-created_at')
+        if ordering in ['created_at', '-created_at', 'status', '-status', 'updated_at', '-updated_at']:
+            qs = qs.order_by(ordering)
+        else:
+            qs = qs.order_by("-created_at")
+            
+        return qs
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -129,7 +143,7 @@ class LoanDetailView(generics.RetrieveUpdateAPIView):
         user_role = getattr(user, "role", "STAFF")
         ip = get_client_ip(self.request)
         new_status = data.get("status")
-
+        
         if new_status and new_status != instance.status:
             # 1. Block Owners and Super Admins from changing status unless God Mode is on
             # Actually, per user request: "super admins, owners and admins should be discouraged 
@@ -181,20 +195,52 @@ class LoanDetailView(generics.RetrieveUpdateAPIView):
                 if user_role != "FIELD_OFFICER" and user_role != "MANAGER" and is_strict_mode and not is_god_mode:
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Only Field Officers or Managers can verify unverified loans.")
+                
+                if is_god_mode:
+                    log_action(user, f"Verified loan via God Mode",
+                               "loans", instance.id,
+                               log_type="GENERAL",
+                               god_mode_active=True)
             elif instance.status == "VERIFIED" and new_status == "APPROVED":
                 if user_role != "MANAGER" and is_strict_mode and not is_god_mode:
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Only Managers can approve verified loans.")
+                
+                # Manager audit/tracking for the approval step
+                instance.manager_verified_at = timezone.now()
+                
+                if is_god_mode:
+                    log_action(user, f"Approved loan via God Mode",
+                               "loans", instance.id,
+                               log_type="GENERAL",
+                               god_mode_active=True)
             elif instance.status == "APPROVED" and new_status == "DISBURSED":
                 if user_role not in ["FINANCE_OFFICER", "FINANCIAL_OFFICER"] and is_strict_mode and not is_god_mode:
                     from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("Only Finance Officers can disburse approved loans.")
+                if is_god_mode:
+                    log_action(user, f"Disbursed loan via God Mode",
+                               "loans", instance.id,
+                               log_type="GENERAL",
+                               god_mode_active=True)
             elif new_status == "REJECTED":
                 can_reject = False
                 if is_god_mode: can_reject = True
-                elif user_role == "FIELD_OFFICER" and instance.status == "UNVERIFIED": can_reject = True
-                elif user_role == "MANAGER" and instance.status == "VERIFIED": can_reject = True
-                elif user_role in ["FINANCE_OFFICER", "FINANCIAL_OFFICER"] and instance.status == "APPROVED": can_reject = True
+                elif user_role == "FIELD_OFFICER" and instance.status == "UNVERIFIED":
+                    # Field Officer rejection: Actual rejection
+                    can_reject = True
+                elif user_role == "MANAGER" and instance.status == "VERIFIED":
+                    # Manager rejection: Send back to Field Officer (UNVERIFIED)
+                    can_reject = True
+                    new_status = "UNVERIFIED"
+                    serializer.validated_data['status'] = "UNVERIFIED"
+                    instance.status_change_reason = f"Rejected by Manager: {data.get('status_change_reason', 'No reason provided')}"
+                elif user_role in ["FINANCE_OFFICER", "FINANCIAL_OFFICER"] and instance.status == "APPROVED":
+                    # Finance rejection: Send back to Manager (VERIFIED)
+                    can_reject = True
+                    new_status = "VERIFIED"
+                    serializer.validated_data['status'] = "VERIFIED"
+                    instance.status_change_reason = f"Rejected by Finance: {data.get('status_change_reason', 'No reason provided')}"
                 
                 if not can_reject and is_strict_mode:
                     from rest_framework.exceptions import PermissionDenied
@@ -202,9 +248,24 @@ class LoanDetailView(generics.RetrieveUpdateAPIView):
 
         serializer.save()
         if new_status and new_status != instance.status:
-            create_loan_activity(instance, user, "STATUS_CHANGE", f"Status updated from {instance.status} to {new_status}")
-            create_notification(instance.user, f"Your loan {instance.id.hex[:8]} is now {new_status}.")
-            AuditLogs.objects.create(admin=user, action="UPDATE_LOAN_STATUS", log_type="STATUS", table_name="loans", record_id=instance.id, old_data={"status": instance.status}, new_data={"status": new_status}, ip_address=ip)
+            # Refresh instance from DB to ensure we have the saved status
+            instance.refresh_from_db()
+            create_loan_activity(instance, user, "STATUS_CHANGE", f"Status updated to {instance.status}")
+            create_notification(instance.user, f"Your loan {instance.id.hex[:8]} is now {instance.status}.")
+            AuditLogs.objects.create(
+                admin=user, 
+                action=f"LOAN_{instance.status}", 
+                log_type="STATUS", 
+                table_name="loans", 
+                record_id=instance.id, 
+                old_data={"status": data.get('status', instance.status)}, 
+                new_data={
+                    "status": instance.status,
+                    "customer": instance.user.full_name if instance.user else "N/A",
+                    "amount": str(instance.principal_amount)
+                }, 
+                ip_address=ip
+            )
 
 class LoanProductListCreateView(generics.ListCreateAPIView):
     queryset = LoanProducts.objects.all().order_by("-created_at")
@@ -248,9 +309,17 @@ class MpesaDisbursementView(views.APIView):
         total_today = sum([float(log.new_data.get("amount", 0)) for log in today_disbursements if log.new_data])
         if mode == "single":
             loan_id = request.data.get("loan_id")
+            mpesa_phone = request.data.get("mpesa_phone")
             if not loan_id: return Response({"error": "loan_id is required"}, status=400)
             try:
                 loan = Loans.objects.get(id=loan_id)
+                
+                # If mpesa_phone is provided in request, update the user record before disbursement
+                if mpesa_phone and mpesa_phone != loan.user.phone:
+                    user_to_update = loan.user
+                    user_to_update.phone = mpesa_phone
+                    user_to_update.save()
+
                 capital = SystemCapital.objects.first()
                 if capital and capital.balance < 50000:
                     super_admins = Admins.objects.filter(is_super_admin=True)

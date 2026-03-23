@@ -1,11 +1,29 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { loanService } from '../api/api';
-import { useAdmins, useInvalidate } from '../hooks/useQueries';
-import { Trash2, AlertCircle, CheckCircle, UserPlus, Mail, Shield, Send } from 'lucide-react';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
+import { useInvalidate } from '../hooks/useQueries';
+import { Trash2, AlertCircle, CheckCircle, UserPlus, Mail, Shield, Send, Clock, UserCheck, ShieldAlert, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import BulkInviteModal from '../components/forms/BulkInviteModal';
 import DirectEmailModal from '../components/ui/DirectEmailModal';
 import { Button, Card, Table } from '../components/ui/Shared';
+import { format, differenceInMinutes, formatDistanceToNow, isAfter, subHours, subDays } from 'date-fns';
+
+const formatLastActive = (lastLogin) => {
+  if (!lastLogin) return { label: 'Never Active', color: 'bg-slate-100 text-slate-500 border-slate-200' };
+  
+  const date = new Date(lastLogin);
+  const now = new Date();
+  const diffInMinutes = (now - date) / 1000 / 60;
+  
+  if (diffInMinutes < 5) return { label: 'Online Now', color: 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse' };
+  if (isAfter(date, subHours(now, 2))) return { label: 'Active recently', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+  if (isAfter(date, subHours(now, 24))) return { label: 'Active today', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+  if (isAfter(date, subDays(now, 7))) return { label: formatDistanceToNow(date) + ' ago', color: 'bg-slate-50 text-slate-600 border-slate-200' };
+  
+  return { label: format(date, 'MMM d, yyyy'), color: 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' };
+};
 
 const AdminAccounts = () => {
   const { user } = useAuth();
@@ -20,18 +38,19 @@ const AdminAccounts = () => {
   const [showEmail, setShowEmail] = useState(false);
   const [emailTargets, setEmailTargets] = useState(null);
   const [bulkEmail, setBulkEmail] = useState(false);
-  const [page, setPage] = useState(1);
 
-  const { data: adminsData, isLoading: loading } = useAdmins({ page, page_size: 10 });
-  
-  const hasMore = useMemo(() => !!adminsData?.next, [adminsData]);
-
-  const admins = useMemo(() => {
-    const adminList = adminsData?.results || adminsData || [];
-    return Array.isArray(adminList) 
-      ? adminList.filter(a => a.role === 'ADMIN' && !a.is_owner)
-      : [];
-  }, [adminsData]);
+  const { 
+    data: admins = [], 
+    isLoading: loading, 
+    isFetching,
+    error: queryError, 
+    hasMore, 
+    showMore: fetchNext, 
+    showLess 
+  } = usePaginatedQuery({
+    queryKey: ['admins', { role: 'ADMIN' }],
+    queryFn: (params) => loanService.getAdmins({ ...params, role: 'ADMIN' })
+  });
 
   const confirmDeleteAdmin = async () => {
     if (!confirmDelete) return;
@@ -171,79 +190,104 @@ const AdminAccounts = () => {
       ) : (
         <Card className="p-0 overflow-hidden border-none shadow-sm">
           <Table
-            headers={['Name', 'Email/Phone', 'Role', 'Status', 'Actions']}
+            headers={['ID', 'Name', 'Email/Phone', 'Role', 'Status', 'Last Active', 'Actions']}
             data={admins}
             initialCount={10}
             maxHeight="max-h-[500px]"
-            renderRow={(admin) => (
-              <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <div className="font-medium text-slate-900 dark:text-white uppercase tracking-tight">{admin.full_name}</div>
-                    {admin.is_super_admin && (
-                      <span className="flex items-center gap-1 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-black uppercase tracking-widest">
-                        <Shield className="w-2.5 h-2.5" /> Super
-                      </span>
+            renderRow={(admin) => {
+              const diff = admin.last_login_at && admin.last_logout_at 
+                ? differenceInMinutes(new Date(admin.last_logout_at), new Date(admin.last_login_at))
+                : null;
+              const duration = diff !== null ? `${Math.floor(diff / 60)}h ${diff % 60}m` : null;
+
+              return (
+                <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <span className="text-[10px] font-mono text-slate-400 font-bold bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded uppercase">{admin.id.slice(0, 8)}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium text-slate-900 dark:text-white uppercase tracking-tight">{admin.full_name}</div>
+                      {admin.is_super_admin && (
+                        <span className="flex items-center gap-1 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-black uppercase tracking-widest">
+                          <Shield className="w-2.5 h-2.5" /> Super
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm text-slate-900 dark:text-white font-medium">{admin.email}</div>
+                    <div className="text-[10px] text-slate-400 font-bold tracking-tighter">{admin.phone || 'No phone'}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black tracking-widest ${getRoleColor(admin.role)}`}>
+                      {admin.role.replace(/_/g, ' ')}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    {getVerificationStatus(admin.is_verified)}
+                  </td>
+                  <td className="px-6 py-4">
+                    {admin.last_login_at ? (
+                      <div className="flex flex-col gap-1">
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${formatLastActive(admin.last_login_at).color}`}>
+                          {formatLastActive(admin.last_login_at).label}
+                        </span>
+                        {admin.failed_login_attempts > 0 && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 text-[9px] font-black uppercase ring-1 ring-red-100 w-fit">
+                              <ShieldAlert className="w-2.5 h-2.5 mr-0.5" />
+                              {admin.failed_login_attempts} Failed
+                            </span>
+                        )}
+                        {admin.is_locked_out && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase w-fit">
+                            <Lock className="w-2.5 h-2.5 mr-0.5" />
+                            LOCKED
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400 italic font-medium">Never</span>
                     )}
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="text-sm text-slate-900 dark:text-white font-medium">{admin.email}</div>
-                  <div className="text-[10px] text-slate-400 font-bold tracking-tighter">{admin.phone || 'No phone'}</div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black tracking-widest ${getRoleColor(admin.role)}`}>
-                    {admin.role.replace(/_/g, ' ')}
-                  </span>
-                </td>
-                <td className="px-6 py-4">
-                  {getVerificationStatus(admin.is_verified)}
-                </td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <button 
-                      onClick={() => {
-                        setEmailTargets(admin);
-                        setBulkEmail(false);
-                        setShowEmail(true);
-                      }}
-                      className="p-2 text-slate-400 hover:text-primary-600 transition-colors"
-                      title="Send Official Email"
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                    {user?.admin?.is_super_admin && admin.id !== user?.admin?.id && (
-                      <button
-                        onClick={() => handleDeleteClick(admin)}
-                        disabled={deletingId === admin.id}
-                        className="p-2 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50"
-                        title="Dismiss Admin"
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => {
+                          setEmailTargets(admin);
+                          setBulkEmail(false);
+                          setShowEmail(true);
+                        }}
+                        className="p-2 text-slate-400 hover:text-primary-600 transition-colors"
+                        title="Send Official Email"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Send className="w-4 h-4" />
                       </button>
-                    )}
-                    {!user?.admin?.is_super_admin && <span className="text-xs text-slate-400 italic">Restricted</span>}
-                    {user?.admin?.is_super_admin && admin.id === user?.admin?.id && <span className="text-xs text-primary-500 font-bold uppercase">Self</span>}
-                  </div>
-                </td>
-              </tr>
-            )}
+                      {user?.admin?.is_super_admin && admin.id !== user?.admin?.id && (
+                        <button
+                          onClick={() => setConfirmDelete(admin)}
+                          disabled={deletingId === admin.id}
+                          className="p-2 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                          title="Dismiss Admin"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      {!user?.admin?.is_super_admin && <span className="text-xs text-slate-400 italic">Restricted</span>}
+                      {user?.admin?.is_super_admin && admin.id === user?.admin?.id && <span className="text-xs text-primary-500 font-bold uppercase">Self</span>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            }}
           />
-          {hasMore && (
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-center">
-              <Button 
-                variant="secondary" 
-                onClick={() => {
-                  const nextPage = page + 1;
-                  setPage(nextPage);
-                }}
-                disabled={loading}
-                className="px-8 font-black uppercase tracking-widest text-xs"
-              >
-                {loading ? 'Processing...' : 'Load More Accounts'}
-              </Button>
-            </div>
-          )}
+          <PaginationFooter
+            resultsCount={admins.length}
+            hasMore={hasMore}
+            isLoading={isFetching}
+            onShowMore={fetchNext}
+            onShowLess={showLess}
+          />
         </Card>
       )}
 

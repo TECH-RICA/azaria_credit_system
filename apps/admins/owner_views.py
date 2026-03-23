@@ -78,26 +78,63 @@ class GodModeToggleView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        if not request.user.is_owner:
-            return Response({"error": "Only the Owner can toggle God Mode."}, status=403)
+        user = request.user
+
+        # Only Primary Owner can toggle god mode for others
+        if not getattr(user, "is_primary_owner", False):
+            return Response(
+                {"error": "Only the Primary Owner can grant or revoke God Mode."},
+                status=403,
+            )
+
         target_id = request.data.get("target_admin_id")
         enabled = request.data.get("enabled")
-        if not target_id:
-            return Response({"error": "target_admin_id is required."}, status=400)
+
         try:
             target = Admins.objects.get(id=target_id)
-            if target.is_owner and not enabled:
-                return Response({"error": "Cannot disable God Mode for the Owner account."}, status=403)
-            target.god_mode_enabled = enabled
-            target.save()
-            AuditLogs.objects.create(
-                admin=request.user, action=f"{'Enabled' if enabled else 'Disabled'} God Mode for {target.full_name}",
-                log_type="SECURITY", table_name="admins", record_id=target.id,
-                is_owner_log=True, ip_address=get_client_ip(request)
-            )
-            return Response({"message": f"God Mode {'enabled' if enabled else 'disabled'} for {target.full_name}"})
         except Admins.DoesNotExist:
             return Response({"error": "Admin not found"}, status=404)
+
+        # Cannot toggle for Primary Owner — they always have it
+        if target.is_primary_owner:
+            return Response(
+                {"error": "Primary Owner God Mode cannot be modified."}, status=403
+            )
+
+        # Target must be an owner — god mode is for owners only
+        if not target.is_owner:
+            return Response(
+                {"error": "God Mode can only be granted to owners."}, status=403
+            )
+
+        target.god_mode_enabled = enabled
+        if enabled:
+            target.god_mode_granted_by = user
+            target.god_mode_granted_at = timezone.now()
+        else:
+            target.god_mode_granted_by = None
+            target.god_mode_granted_at = None
+        target.save()
+
+        # Log using ONLY email — never name or role
+        AuditLogs.objects.create(
+            admin=None,  # Never link to owner account
+            action=f"God Mode {'granted to' if enabled else 'revoked from'} {target.email}",
+            log_type="SECURITY",
+            table_name="admins",
+            record_id=target.id,
+            is_owner_log=True,
+            ip_address=get_client_ip(request),
+            new_data={
+                "performed_by": user.email,  # email only, never name
+                "target": target.email,
+                "action": "GOD_MODE_GRANT" if enabled else "GOD_MODE_REVOKE",
+            },
+        )
+
+        return Response(
+            {"message": f"God Mode {'enabled' if enabled else 'disabled'} for {target.email}"}
+        )
 from ..permissions import IsAdminUser, IsOwnerOrCoOwner
 
 class OwnerAuditListView(views.APIView):

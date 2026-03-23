@@ -3,11 +3,11 @@ import { Send, MapPin, Search, CheckCircle2, AlertTriangle, X, Clock, Wallet, Ph
 import { Card, Table, Button, Input, StatCard } from '../../components/ui/Shared';
 import { loanService } from '../../api/api';
 import toast from 'react-hot-toast';
-import { useLoans, useInvalidate } from '../../hooks/useQueries';
+import { useDisbursementQueue, useInvalidate } from '../../hooks/useQueries';
 import { format } from 'date-fns';
 
 const FinanceDisbursement = () => {
-  const { data: loansData, isLoading: loading } = useLoans({ status: 'APPROVED' });
+  const { data: loansData, isLoading: loading } = useDisbursementQueue();
   const { invalidateLoans, invalidateCapital } = useInvalidate();
   const loans = useMemo(() => loansData?.results || loansData || [], [loansData]);
 
@@ -29,8 +29,14 @@ const FinanceDisbursement = () => {
   const processedData = useMemo(() => {
     let result = [...loans];
 
-    // 1. Sort - Oldest first
-    result.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    // 1. Sort - Handle Equal priority: Oldest creation remains top, but we want 
+    // those RE-SUBMITTED (updated recently) to not jump the line unless it's their turn.
+    // Standardizing to: Oldest "created_at" always first for fairness.
+    result.sort((a, b) => {
+      const timeA = new Date(a.created_at).getTime();
+      const timeB = new Date(b.created_at).getTime();
+      return timeA - timeB;
+    });
 
     // 2. Search
     if (search.trim()) {
@@ -64,7 +70,9 @@ const FinanceDisbursement = () => {
     try {
       await loanService.api.post('/payments/disburse/', { 
         loan_id: loanId,
-        mpesa_phone: mpesaNumber
+        mpesa_phone: mpesaNumber,
+        confirmed: true,
+        mode: 'single'
       });
       toast.success('Disbursement successful');
       setShowConfirmModal(false);
@@ -72,6 +80,26 @@ const FinanceDisbursement = () => {
       invalidateCapital();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Disbursement failed');
+    } finally {
+      setDisbursing(false);
+    }
+  };
+
+  const handleReject = async (loanId) => {
+    const reason = window.prompt("Enter reason for rejection:");
+    if (!reason) return;
+
+    setDisbursing(true);
+    try {
+      await loanService.updateLoan(loanId, { 
+        status: 'REJECTED',
+        status_change_reason: reason 
+      });
+      toast.success('Loan rejected and returned to Manager');
+      setShowConfirmModal(false);
+      invalidateLoans();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Rejection failed');
     } finally {
       setDisbursing(false);
     }
@@ -85,7 +113,11 @@ const FinanceDisbursement = () => {
     let failCount = 0;
 
     const results = await Promise.allSettled(
-      processedData.map(loan => loanService.api.post('/payments/disburse/', { loan_id: loan.id }))
+      processedData.map(loan => loanService.api.post('/payments/disburse/', { 
+        loan_id: loan.id,
+        confirmed: true,
+        mode: 'single' 
+      }))
     );
 
     results.forEach(res => {
@@ -179,7 +211,7 @@ const FinanceDisbursement = () => {
               onChange={(e) => setSelectedBranch(e.target.value)}
               className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm appearance-none focus:ring-2 focus:ring-primary-500/20 outline-none"
             >
-              {branches.map(b => <option key={b} value={b}>{b}</option>)}
+              {branches.map(b => <option key={`branch-opt-${b}`} value={b}>{b}</option>)}
             </select>
           </div>
 
@@ -232,8 +264,8 @@ const FinanceDisbursement = () => {
                   <td colSpan="6" className="px-6 py-10 text-center text-slate-500">No pending disbursements found</td>
                 </tr>
               ) : (
-                processedData.map((loan, idx) => (
-                  <tr key={loan.id || idx} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors relative">
+                processedData.map((loan) => (
+                  <tr key={loan.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors relative">
                     <td className="px-6 py-4 border-l-4 border-l-transparent group-hover:border-l-emerald-500 transition-all">
                       <div className="flex flex-col">
                         <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm">
@@ -348,8 +380,19 @@ const FinanceDisbursement = () => {
                   onClick={() => handleDisburse(currentLoan.id)}
                   loading={disbursing}
                 >
-                  Disburse Now
+                  Confirm & Disburse {formatKES(currentLoan.principal_amount)}
                 </Button>
+
+                <Button 
+                  variant="outline" 
+                  className="w-full border-red-200 text-red-600 hover:bg-red-50 font-bold rounded-xl py-3"
+                  onClick={() => handleReject(currentLoan.id)}
+                  disabled={disbursing}
+                >
+                  <X className="w-3.5 h-3.5 mr-2" />
+                  Reject & Return to Manager
+                </Button>
+                
                 <Button 
                   variant="secondary" 
                   className="w-full font-bold rounded-xl py-3"

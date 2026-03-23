@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Crown, ArrowLeft } from 'lucide-react';
+import { Crown, ArrowLeft, Eye, ShieldAlert, Zap } from 'lucide-react';
 
 function cn(...inputs) {
   return twMerge(clsx(inputs));
@@ -13,22 +13,11 @@ function cn(...inputs) {
 
 const Layout = ({ children, title }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1280);
-  const { user, activeRole } = useAuth();
+  const { user, activeRole, godModeActing, activateActMode } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Pages where the banner should NOT show
-  const noBannerPaths = [
-    '/admin/settings',
-    '/admin/audit',
-    '/admin/security',
-    '/owner',
-    '/profile',
-  ];
-
-  const showGodModeBanner = user?.is_owner && 
-    activeRole !== user?.role &&
-    !location.pathname.startsWith('/owner');
+  const isInGodMode = user?.is_owner && activeRole !== user?.role;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -46,23 +35,49 @@ const Layout = ({ children, title }) => {
           isSidebarOpen={isSidebarOpen}
         />
         
-        {/* God Mode Banner — only shows for Owner */}
-        {showGodModeBanner && (
-          <div className="bg-amber-50 border-b border-amber-200 px-4 lg:px-6 py-2 flex items-center justify-between flex-shrink-0 sticky top-16 z-10">
-            <div className="flex items-center gap-2">
-              <Crown className="w-4 h-4 text-amber-500" />
-              <span className="text-xs font-bold text-amber-700">
-                God Mode Active — Viewing as{' '}
-                {activeRole?.replace(/_/g, ' ') || user?.role?.replace(/_/g, ' ')}
-              </span>
+        {/* God Mode Persistent Banner */}
+        {isInGodMode && (
+          <div className={cn(
+            "border-b px-4 lg:px-6 py-2.5 flex items-center justify-between flex-shrink-0 sticky top-16 z-30 transition-colors duration-300",
+            godModeActing 
+              ? "bg-amber-600 border-amber-500 text-white shadow-lg" 
+              : "bg-blue-600 border-blue-500 text-white shadow-md"
+          )}>
+            <div className="flex items-center gap-4">
+              <div className="p-1.5 bg-white/20 rounded-lg">
+                {godModeActing ? <ShieldAlert className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-wider">
+                    {godModeActing ? "ACTING AS" : "OBSERVING AS"} {activeRole?.replace(/_/g, ' ')}
+                  </span>
+                  <span className="w-1 h-1 bg-white/40 rounded-full" />
+                  <span className="text-[10px] font-bold opacity-80">
+                    {godModeActing ? "MASKED SESSION ACTIVE" : "PREVIEW MODE (READ-ONLY)"}
+                  </span>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => navigate('/owner/dashboard')}
-              className="flex items-center gap-1.5 text-xs font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Return to Owner Dashboard
-            </button>
+
+            <div className="flex items-center gap-2">
+              {!godModeActing && (
+                <button
+                  onClick={activateActMode}
+                  className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider bg-white text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-all shadow-sm"
+                >
+                  <Zap className="w-3 h-3 fill-current" />
+                  Enable Actions
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/owner/dashboard')}
+                className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider bg-black/20 hover:bg-black/30 px-3 py-1.5 rounded-lg transition-all border border-white/10"
+              >
+                <ArrowLeft className="w-3 h-3 text-white" />
+                Exit God Mode
+              </button>
+            </div>
           </div>
         )}
 

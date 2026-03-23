@@ -16,6 +16,14 @@ from ..serializers import (
 )
 from ..utils.security import log_action, get_client_ip, get_filtered_queryset
 
+def _get_field_value(instance, field):
+    if hasattr(instance, field):
+        return str(getattr(instance, field))
+    profile = getattr(instance, 'profile', None)
+    if profile and hasattr(profile, field):
+        return str(getattr(profile, field))
+    return ''
+
 class UserListCreateView(generics.ListCreateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -23,15 +31,35 @@ class UserListCreateView(generics.ListCreateAPIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_queryset(self):
-        return get_filtered_queryset(self.request.user, Users.objects.select_related("profile", "created_by"), 'profile__branch_fk').order_by("-created_at")
+        return get_filtered_queryset(self.request.user, Users.objects.select_related("profile", "created_by"), 'profile__branch_fk', request=self.request).order_by("-created_at")
 
     def perform_create(self, serializer):
-        user = self.request.user
+        user = getattr(self.request, "user", None)
         user_role = getattr(user, "role", "STAFF")
-        if user_role not in ["FIELD_OFFICER", "MANAGER"] and not getattr(user, "god_mode_enabled", False):
+
+        if getattr(user, "god_mode_enabled", False):
+            # Assign customer to owner acting as field officer
+            serializer.save(
+                created_by=user,
+                god_mode_registered=True,  # New boolean field added to Users model
+            )
+            log_action(
+                user,
+                f"Registered customer via God Mode",
+                "users",
+                None,
+                log_type="GENERAL",
+                god_mode_active=True,  # triggers identity protection
+            )
+            return
+
+        if user_role not in ["FIELD_OFFICER", "MANAGER"]:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only Field Officers and Managers can register new customers. High-level accounts must use God Mode.")
-            
+
+            raise PermissionDenied(
+                "Only Field Officers and Managers can register new customers. High-level accounts must use God Mode."
+            )
+
         created_by = user if (user and user.is_authenticated) else None
         serializer.save(created_by=created_by)
 
@@ -42,22 +70,22 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_queryset(self):
-        user = self.request.user
+        user = getattr(self.request, "user", None)
         if not user or not user.is_authenticated:
             return Users.objects.none()
             
         # Super Admins and Owners can see everyone
-        if getattr(user, "is_super_admin", False) or getattr(user, "is_owner", False) or user.role == "OWNER":
+        is_owner = getattr(user, "is_owner", False) or getattr(user, "role", None) == "OWNER"
+        if getattr(user, "is_super_admin", False) or is_owner:
             return Users.objects.all()
 
-        if hasattr(user, "role") and user.role == "MANAGER":
+        user_role = getattr(user, "role", None)
+        if user_role == "MANAGER":
             # Managers can see users in their branch
-            if user.branch_fk:
+            if getattr(user, "branch_fk", None):
                 return Users.objects.filter(profile__branch_fk=user.branch_fk)
-            elif user.branch:
-                return Users.objects.filter(profile__branch=user.branch)
             return Users.objects.none()
-        elif hasattr(user, "role") and user.role == "FIELD_OFFICER":
+        elif user_role == "FIELD_OFFICER":
             return Users.objects.filter(created_by=user)
             
         return Users.objects.all()
@@ -77,17 +105,50 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
             AuditLogs.objects.create(admin=self.request.user, action="LOCKED_CUSTOMER", log_type="MANAGEMENT", table_name="users", record_id=instance.id, new_data={"is_locked": True}, ip_address=ip)
 
     def perform_update(self, serializer):
-        instance = self.get_object()
-        user = self.request.user
+        user = getattr(self.request, "user", None)
         ip = get_client_ip(self.request)
+        instance = self.get_object()
+        
+        # Check if phone is being changed
         if "phone" in serializer.validated_data and serializer.validated_data["phone"] != instance.phone:
             has_verified_loans = Loans.objects.filter(user=instance, status__in=["VERIFIED", "APPROVED", "DISBURSED", "ACTIVE", "OVERDUE", "DEFAULTED", "REPAID"]).exists()
             if has_verified_loans:
                 from rest_framework import serializers
                 raise serializers.ValidationError({"phone": "Phone number cannot be changed once a customer has a verified or active loan for security reasons."})
-        old_data = {field: str(getattr(instance, field)) for field in serializer.validated_data}
+        
+        # Fields we want to audit.
+        # Identity fields (name, id, images) are now LOCKED in the serializer.
+        significant_fields = {'is_locked', 'is_verified', 'phone', 'employment_status', 'monthly_income'}
+        
+        # Get data from BOTH validated_data (User model) AND request.data (for Profile fields mapping)
+        request_data = self.request.data
+        
+        # Calculate old data BEFORE saving
+        old_data = {}
+        for field in significant_fields:
+            if field in serializer.validated_data or field in request_data:
+                old_data[field] = _get_field_value(instance, field)
+        
         updated_instance = serializer.save()
-        AuditLogs.objects.create(admin=user, action="UPDATE_CUSTOMER", log_type="MANAGEMENT", table_name="users", record_id=instance.id, old_data=old_data, new_data={k: str(v) for k, v in serializer.validated_data.items()}, ip_address=ip)
+        
+        # Identify changes that actually occurred by comparing old vs new
+        changed = {}
+        for field, old_val in old_data.items():
+            new_val = _get_field_value(updated_instance, field)
+            if str(old_val) != str(new_val):
+                changed[field] = str(new_val)
+        
+        if changed:
+            AuditLogs.objects.create(
+                admin=user, 
+                action="CUSTOMER_SIGNIFICANT_UPDATE", 
+                log_type="MANAGEMENT", 
+                table_name="users", 
+                record_id=instance.id, 
+                old_data={k: old_data[k] for k in changed}, 
+                new_data=changed, 
+                ip_address=ip
+            )
 
 class CheckUserView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -130,8 +191,7 @@ class CustomerDraftListCreateView(generics.ListCreateAPIView):
         return CustomerDraft.objects.filter(created_by=self.request.user, is_completed=False).order_by("-updated_at")
 
     def perform_create(self, serializer):
-        draft = serializer.save(created_by=self.request.user)
-        log_action(self.request.user, f"Saved customer draft: {draft.incomplete_reason}", "customer_drafts", draft.id, log_type="DRAFT", new_data=serializer.data)
+        serializer.save(created_by=self.request.user)
 
 class CustomerDraftDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CustomerDraftSerializer
@@ -142,5 +202,4 @@ class CustomerDraftDetailView(generics.RetrieveUpdateDestroyAPIView):
         return CustomerDraft.objects.filter(created_by=self.request.user)
 
     def perform_update(self, serializer):
-        draft = serializer.save()
-        log_action(self.request.user, f"Updated customer draft: {draft.incomplete_reason}", "customer_drafts", draft.id, log_type="DRAFT", new_data=serializer.data)
+        serializer.save()

@@ -159,30 +159,47 @@ class AdminSerializer(serializers.ModelSerializer):
             "is_two_factor_enabled",
             "created_at",
             "ownership_granted_by_name",
+            "last_login_at",
+            "last_logout_at",
+            "login_count",
         ]
-        read_only_fields = ["is_owner", "is_primary_owner", "is_verified", "created_at"]
+        read_only_fields = [
+            "is_owner", 
+            "is_primary_owner", 
+            "is_verified", 
+            "created_at",
+            "last_login_at",
+            "last_logout_at",
+            "login_count"
+        ]
 
     def validate(self, data):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return data
-            
+
         user = request.user
         instance = self.instance
-        
+
         # Only owners or super admins can change god_mode_enabled or is_super_admin
         restricted_fields = ["god_mode_enabled", "is_super_admin", "is_blocked"]
-        
+
         for field in restricted_fields:
             if field in data and data[field] != getattr(instance, field, None):
-                # Super Admin cannot toggle God Mode for themselves or others
-                # ONLY an Owner or someone who already has God Mode (if that's the logic)
-                # But typically only the Owner should manage God Mode/Super Admins
-                if not (user.is_owner or user.role == "OWNER" or getattr(user, 'god_mode_enabled', False)):
-                    raise serializers.ValidationError({
-                        field: "Only the system owner or a god-mode administrator can modify this field."
-                    })
-                    
+                # god_mode_enabled can ONLY be changed via the dedicated
+                # GodModeToggleView endpoint, never via general PATCH
+                if field == "god_mode_enabled":
+                    raise serializers.ValidationError(
+                        {
+                            field: "God Mode can only be changed via the dedicated endpoint."
+                        }
+                    )
+                # Other restricted fields require is_owner
+                if not (user.is_owner or user.role == "OWNER"):
+                    raise serializers.ValidationError(
+                        {field: "Only the system owner can modify this field."}
+                    )
+
         return data
 
     def get_ownership_granted_by_name(self, obj):
@@ -272,7 +289,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(required=False)
     guarantors = GuarantorSerializer(many=True, read_only=True)
-    national_id = serializers.CharField(write_only=True, required=False)
     has_active_loan = serializers.SerializerMethodField()
 
     class Meta:
@@ -360,23 +376,30 @@ class UserSerializer(serializers.ModelSerializer):
 
         return normalized
 
-    def validate_national_id(self, value):
-        if not value:
-            return value
-        # Check if another user has this national ID
-        existing = UserProfiles.objects.filter(national_id=value)
-        if self.instance:
-            existing = existing.exclude(user=self.instance)
-        if existing.exists():
-            raise serializers.ValidationError(
-                "A user with this National ID already exists."
-            )
-        return value
+    def validate(self, data):
+        """
+        Check that national_id in request.data is valid since it's used in create/update.
+        """
+        request = self.context.get("request")
+        if not request:
+            return data
+
+        national_id = request.data.get("national_id")
+        if national_id:
+            # Check if another user has this national ID
+            existing = UserProfiles.objects.filter(national_id=national_id)
+            if self.instance:
+                existing = existing.exclude(user=self.instance)
+            if existing.exists():
+                raise serializers.ValidationError(
+                    {"national_id": "A user with this National ID already exists."}
+                )
+        return data
 
     def create(self, validated_data):
-        national_id = validated_data.pop("national_id", None)
         request = self.context.get("request")
         profile_data = request.data
+        national_id = profile_data.get("national_id")
         files = request.FILES
 
         # Ensure email is None if empty string
@@ -432,26 +455,26 @@ class UserSerializer(serializers.ModelSerializer):
             profile_defaults["national_id_image"] = files.get("national_id_image")
 
         # Use update_or_create to populate the fields correctly
-        UserProfile, created = UserProfiles.objects.update_or_create(
+        user_profile, created = UserProfiles.objects.update_or_create(
             user=user,
             defaults=profile_defaults,
         )
-        
-        # Manually sync created_at for profiles if they exist but were created with naive datetime
-        if not created and not timezone.is_aware(UserProfile.created_at):
-             UserProfile.created_at = timezone.now()
-             UserProfile.save()
 
         return user
 
     def update(self, instance, validated_data):
-        national_id = validated_data.pop("national_id", None)
         request = self.context.get("request")
         profile_data = request.data
         files = request.FILES
 
         # Update the basic User fields
+        # Identity protection: Only allow updating fields that are not identity-related
+        # unless it's a superuser (optional, but following your strict lock request)
+        protected_user_fields = {'full_name'}
+        
         for attr, value in validated_data.items():
+            if attr in protected_user_fields:
+                continue # Skip identity fields
             if attr == "email" and value == "":
                 value = None
             setattr(instance, attr, value)
@@ -478,8 +501,8 @@ class UserSerializer(serializers.ModelSerializer):
                     )
 
         # Handle updating or creating the related profile
+        # Identity protection: national_id, profile_image, national_id_image are locked
         profile_defaults = {
-            "national_id": national_id or profile_data.get("national_id"),
             "date_of_birth": profile_data.get("date_of_birth") or None,
             "branch": profile_data.get("branch") or None,
             "town": profile_data.get("town") or None,
@@ -494,21 +517,8 @@ class UserSerializer(serializers.ModelSerializer):
             if v == "":
                 profile_defaults[k] = None
 
-        # Only update images if they are provided in files
-        if files.get("profile_image"):
-            profile_defaults["profile_image"] = files.get("profile_image")
-        elif (
-            "profile_image" in profile_data and profile_data["profile_image"] == "null"
-        ):
-            profile_defaults["profile_image"] = None
-
-        if files.get("national_id_image"):
-            profile_defaults["national_id_image"] = files.get("national_id_image")
-        elif (
-            "national_id_image" in profile_data
-            and profile_data["national_id_image"] == "null"
-        ):
-            profile_defaults["national_id_image"] = None
+        # Logic change: We NO LONGER update profile_image or national_id_image 
+        # or national_id here to enforce accuracy and security as requested.
 
         up, created = UserProfiles.objects.update_or_create(
             user=instance,
@@ -528,8 +538,9 @@ class LoanSerializer(serializers.ModelSerializer):
     documents = LoanDocumentSerializer(many=True, read_only=True)
     activities = LoanActivitySerializer(many=True, read_only=True)
     customer_name = serializers.ReadOnlyField(source="user.full_name")
-    customer_phone = serializers.ReadOnlyField(source="user.phone")
+    customer_phone = serializers.CharField(source="user.phone", required=False)
     product_name = serializers.ReadOnlyField(source="loan_product.name")
+    branch_name = serializers.ReadOnlyField(source="user.profile.branch_fk.name")
     guarantor_phone = serializers.SerializerMethodField()
 
     remaining_balance = serializers.DecimalField(

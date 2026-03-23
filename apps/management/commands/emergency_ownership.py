@@ -29,6 +29,11 @@ class Command(BaseCommand):
             admin = Admins.objects.get(email=email)
             admin.is_owner = True
             admin.god_mode_enabled = True
+            
+            # Set primary owner if none exists
+            if not Admins.objects.filter(is_primary_owner=True).exists():
+                admin.is_primary_owner = True
+            
             admin.ownership_granted_at = timezone.now()
             admin.save()
             self.stdout.write(self.style.SUCCESS(f'Emergency ownership granted to existing account: {email}'))
@@ -38,6 +43,10 @@ class Command(BaseCommand):
                     self.stderr.write('--password is required when using --create')
                     return
                 password_hash = bcrypt.hashpw(options['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                
+                # Check for primary owner existence before creation
+                is_primary = not Admins.objects.filter(is_primary_owner=True).exists()
+                
                 admin = Admins.objects.create(
                     id=uuid.uuid4(),
                     full_name='Emergency Owner',
@@ -46,10 +55,11 @@ class Command(BaseCommand):
                     password_hash=password_hash,
                     is_owner=True,
                     is_verified=True,
+                    is_primary_owner=is_primary,
                     god_mode_enabled=True,
                     ownership_granted_at=timezone.now(),
                 )
-                self.stdout.write(self.style.SUCCESS(f'Emergency owner account created: {email}'))
+                self.stdout.write(self.style.SUCCESS(f'Emergency owner account created: {email} (Primary: {is_primary})'))
             else:
                 self.stderr.write(f'No account found with email {email}. Use --create to create one.')
                 return

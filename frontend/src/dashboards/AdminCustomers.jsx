@@ -1,9 +1,13 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { loanService } from '../api/api';
-import { useCustomers, useInvalidate } from '../hooks/useQueries';
-import { Table, StatCard, Button, Pagination, Card } from '../components/ui/Shared';
-import { Search, Filter, UserPlus, Trash2, Lock, Unlock, MessageSquare, Send, X, AlertTriangle } from 'lucide-react';
+import { useInvalidate, useBranches } from '../hooks/useQueries';
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import PaginationFooter from '../components/ui/PaginationFooter';
+import { Table, StatCard, Button, Card } from '../components/ui/Shared';
+import { Search, Filter, UserPlus, Trash2, Lock, Unlock, MessageSquare, Send, X, AlertTriangle, Building2, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import DateRangeFilter from '../components/ui/DateRangeFilter';
+import ExportButton from '../components/ui/ExportButton';
 import CustomerRegistrationForm from '../components/forms/CustomerRegistrationForm';
 import CustomerHistoryModal from '../components/ui/CustomerHistoryModal';
 import ChecklistModal from '../components/ui/ChecklistModal';
@@ -84,30 +88,37 @@ const AdminCustomers = () => {
   const [showPreRegChecklist, setShowPreRegChecklist] = useState(false);
   const [showRoleWarning, setShowRoleWarning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  const [branchFilter, setBranchFilter] = useState('all');
 
-  const { data: customersData, isLoading: loading } = useCustomers({ page_size: 5000 });
-  
-  const customers = useMemo(() => {
-    return customersData?.results || customersData || [];
-  }, [customersData]);
+  const { data: branchesData } = useBranches();
+  const branches = branchesData?.results || branchesData || [];
 
-  const processedCustomers = useMemo(() => {
-    let result = [...customers];
-    
-    if (searchTerm) {
-      const lower = searchTerm.toLowerCase();
-      result = result.filter(c => 
-        c.full_name?.toLowerCase().includes(lower) || 
-        c.phone?.includes(searchTerm) ||
-        c.id?.includes(searchTerm)
-      );
+  const {
+    data: customers,
+    isLoading: loading,
+    isFetching,
+    hasMore,
+    canShowLess,
+    showMore,
+    showLess,
+    totalCount,
+    reset,
+  } = usePaginatedQuery({
+    queryKey: ['customers'],
+    queryFn: (params) => loanService.getCustomers(params),
+    pageSize: 10,
+    params: {
+      search: searchTerm,
+      branch: branchFilter === 'all' ? undefined : branchFilter,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined,
     }
+  });
 
-    // Default: Newest first
-    result.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    return result;
-  }, [customers, searchTerm]);
+  useEffect(() => {
+    reset();
+  }, [searchTerm, branchFilter, dateRange, reset]);
 
   const handleStartRegistration = () => {
     if (user?.role !== 'FIELD_OFFICER') {
@@ -170,105 +181,133 @@ const AdminCustomers = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
           <h3 className="text-xl font-bold">Customers & Loanees</h3>
           <p className="text-sm text-slate-500">Full list of customers with their loan statuses.</p>
         </div>
-        <div className="flex items-center gap-3">
-          {(user?.role === 'MANAGER' || user?.role === 'FIELD_OFFICER' || user?.god_mode_enabled) && (
-            <Button onClick={handleStartRegistration} className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+          {(user?.role === 'MANAGER' || user?.role === 'FIELD_OFFICER' || user?.god_mode_enabled) && !user?.is_owner && (
+            <Button onClick={handleStartRegistration} className="flex items-center gap-2 whitespace-nowrap">
               <UserPlus className="w-4 h-4" />
               Register Customer
             </Button>
           )}
-          <div className="flex gap-2">
-            <div className="relative">
+          {user?.is_owner && (
+            <ExportButton 
+              resource="customers"
+              dateRange={dateRange}
+              filename={`all_customers_export_${new Date().toISOString().split('T')[0]}.csv`}
+            />
+          )}
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+            <div className="relative group min-w-[160px]">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
+                <Building2 className="w-4 h-4 text-primary-500" />
+              </div>
+              <select
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                className="w-full pl-9 pr-8 py-2.5 border border-slate-200 rounded-xl text-sm bg-white dark:bg-slate-900 dark:border-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20 appearance-none font-bold uppercase tracking-tight text-slate-700 dark:text-slate-200 shadow-sm transition-all hover:border-primary-300"
+              >
+                <option value="all">ALL BRANCHES</option>
+                {Array.isArray(branches) && branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name.toUpperCase()}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-primary-500 transition-colors" />
+            </div>
+
+            <DateRangeFilter 
+              onChange={setDateRange}
+            />
+
+            <div className="relative flex-1 sm:flex-initial min-w-[300px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 type="text" 
-                placeholder="Search customer..." 
+                placeholder="Search..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700" 
+                className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm bg-white dark:bg-slate-900 dark:border-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20 font-bold text-slate-700 dark:text-slate-200 shadow-sm transition-all" 
               />
             </div>
           </div>
         </div>
+      </div>
 
-        <ChecklistModal
-          isOpen={showPreRegChecklist}
-          onClose={() => setShowPreRegChecklist(false)}
-          onConfirm={() => {
-            setShowPreRegChecklist(false);
-            setIsRegistering(true);
-          }}
-          title="Before You Begin — Prepare the Following"
-          items={[
-            "Original National ID card (physical copy present)",
-            "Clear photo of the National ID card (front side)",
-            "Passport photo or clear face photo of the customer",
-            "Active M-Pesa registered phone number",
-            "Details of at least one guarantor (full name, phone number, national ID)",
-            "Customer's employment status and estimated monthly income",
-            "Customer's physical address (village, town)"
-          ]}
-          confirmText="Proceed to Registration"
-          note="Incomplete information will cause delays in loan processing. Ensure all items are ready before proceeding."
-        />
+      <ChecklistModal
+        isOpen={showPreRegChecklist}
+        onClose={() => setShowPreRegChecklist(false)}
+        onConfirm={() => {
+          setShowPreRegChecklist(false);
+          setIsRegistering(true);
+        }}
+        title="Before You Begin — Prepare the Following"
+        items={[
+          "Original National ID card (physical copy present)",
+          "Clear photo of the National ID card (front side)",
+          "Passport photo or clear face photo of the customer",
+          "Active M-Pesa registered phone number",
+          "Details of at least one guarantor (full name, phone number, national ID)",
+          "Customer's employment status and estimated monthly income",
+          "Customer's physical address (village, town)"
+        ]}
+        confirmText="Proceed to Registration"
+        note="Incomplete information will cause delays in loan processing. Ensure all items are ready before proceeding."
+      />
 
-        {showRoleWarning && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-300">
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-500" />
-                </div>
-                <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">System Policy Warning</h3>
-                <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-6">
-                  Customer registration is primarily a <span className="font-bold text-amber-600">Field Officer</span> responsibility. 
-                  By continuing, you are performing a role outside your primary designation.
+      {showRoleWarning && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-300">
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-500" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">System Policy Warning</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-6">
+                Customer registration is primarily a <span className="font-bold text-amber-600">Field Officer</span> responsibility. 
+                By continuing, you are performing a role outside your primary designation.
+              </p>
+              <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl mb-8 text-left border border-slate-100 dark:border-slate-800">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Requirement:</p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  If you proceed, you <span className="text-primary-600">must</span> assign a Field Officer to this customer after registration to manage their loan applications and verification.
                 </p>
-                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl mb-8 text-left border border-slate-100 dark:border-slate-800">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Requirement:</p>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                    If you proceed, you <span className="text-primary-600">must</span> assign a Field Officer to this customer after registration to manage their loan applications and verification.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={() => {
-                        setShowRoleWarning(false);
-                        setShowPreRegChecklist(true);
-                    }}
-                    className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold h-12 rounded-xl transition-colors"
-                  >
-                    I Understand, Continue
-                  </button>
-                  <button 
-                    onClick={() => setShowRoleWarning(false)}
-                    className="w-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold h-12 rounded-xl hover:bg-slate-200 transition-colors"
-                  >
-                    Cancel & Return
-                  </button>
-                </div>
+              </div>
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={() => {
+                      setShowRoleWarning(false);
+                      setShowPreRegChecklist(true);
+                  }}
+                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold h-12 rounded-xl transition-colors"
+                >
+                  I Understand, Continue
+                </button>
+                <button 
+                  onClick={() => setShowRoleWarning(false)}
+                  className="w-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold h-12 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Cancel & Return
+                </button>
               </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {processedCustomers.length === 0 ? (
+      {customers.length === 0 ? (
         <div className="p-8 text-center text-slate-500 bg-slate-50 rounded-lg border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
           <p>{searchTerm ? 'No results matching your search' : 'No customers registered yet'}</p>
         </div>
       ) : (
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden p-0">
           <Table
             headers={['Customer', 'Borrowed', 'Paid', 'Balance', 'Status', 'Actions']}
-            data={processedCustomers}
-            initialCount={10}
+            data={customers}
             maxHeight="max-h-[500px]"
+            disableLocalPagination={true}
             renderRow={(customer) => {
               const balance = (customer.totalBorrowed || 0) - (customer.totalRepaid || 0);
               return (
@@ -329,6 +368,15 @@ const AdminCustomers = () => {
                 </tr>
               );
             }}
+          />
+          <PaginationFooter
+            hasMore={hasMore}
+            canShowLess={canShowLess}
+            onShowMore={showMore}
+            onShowLess={showLess}
+            isFetching={isFetching}
+            totalCount={totalCount}
+            currentCount={customers.length}
           />
         </Card>
       )}

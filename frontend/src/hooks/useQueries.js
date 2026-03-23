@@ -6,21 +6,39 @@ import { useAuth } from '../context/AuthContext';
 export const useLoans = (params = {}) => useQuery({
   queryKey: ['loans', params],
   queryFn: () => loanService.getLoans(params),
-  staleTime: 1000 * 60 * 2,
+  staleTime: 1000 * 30, // 30 seconds
+  refetchInterval: 30000, // 30 seconds
+});
+
+// Specialized High-Priority Hooks
+export const useManagerQueue = (params = {}) => useQuery({
+  queryKey: ['manager-queue', params],
+  queryFn: () => loanService.getLoans({ ...params, ordering: 'created_at' }),
+  staleTime: 1000 * 5,
+  refetchInterval: 5000, // 5 seconds for Managers
+});
+
+export const useDisbursementQueue = (params = {}) => useQuery({
+  queryKey: ['disbursement-queue', params],
+  queryFn: () => loanService.getLoans({ ...params, status: 'APPROVED', ordering: 'created_at' }),
+  staleTime: 1000 * 5,
+  refetchInterval: 5000, // 5 seconds for Finance
 });
 
 // ── CUSTOMERS ──────────────────────────────────────────────────
 export const useCustomers = (params = {}) => useQuery({
   queryKey: ['customers', params],
   queryFn: () => loanService.getCustomers(params),
-  staleTime: 1000 * 60 * 2,
+  staleTime: 1000 * 60,
+  refetchInterval: 60000,
 });
 
 // ── REPAYMENTS ─────────────────────────────────────────────────
 export const useRepayments = (params = {}) => useQuery({
   queryKey: ['repayments', params],
   queryFn: () => loanService.getRepayments(params),
-  staleTime: 1000 * 60 * 2,
+  staleTime: 1000 * 30,
+  refetchInterval: 30000,
 });
 
 // ── CAPITAL BALANCE ────────────────────────────────────────────
@@ -47,7 +65,22 @@ export const useFinancialAnalytics = () => useQuery({
   staleTime: 1000 * 60 * 2,
 });
 
+export const useOwnerAnalytics = () => useQuery({
+  queryKey: ['owner-analytics'],
+  queryFn: () => loanService.api.get('/owner/analytics/')
+      .then(r => r.data),
+  staleTime: 1000 * 60 * 5,
+  enabled: true,
+});
+
 // ── SECURITY LOGS ──────────────────────────────────────────────
+export const useTeamSecurityAlerts = () => useQuery({
+  queryKey: ['team-security-alerts'],
+  queryFn: () => loanService.api.get('/team-security-alerts/').then(r => r.data),
+  staleTime: 1000 * 30,
+  refetchInterval: 30000, // Frequent checks for security
+});
+
 export const useSecurityLogs = (params = {}) => {
   const { enabled, ...queryParams } = params;
   return useQuery({
@@ -107,13 +140,24 @@ export const useUnmatchedRepayments = () => useQuery({
   staleTime: 1000 * 15,   // 15 seconds — finance officer monitors this live
 });
 
+// ── SYSTEM HEALTH ──────────────────────────────────────────────
+export const useSystemHealth = () => useQuery({
+  queryKey: ['system-health'],
+  queryFn: () => loanService.getSystemHealth(),
+  staleTime: 1000 * 30, // 30 seconds
+  refetchInterval: 1000 * 60, // Poll every minute
+});
+
 // ── INVALIDATION HELPER ────────────────────────────────────────
 // Use this after mutations (disburse, approve, register customer etc.)
 // to force a fresh fetch of affected data
 export const useInvalidate = () => {
   const queryClient = useQueryClient();
   return {
-    invalidateLoans: () => queryClient.invalidateQueries({ queryKey: ['loans'] }),
+    invalidateLoans: () => {
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-queue'] });
+    },
     invalidateCustomers: () => queryClient.invalidateQueries({ queryKey: ['customers'] }),
     invalidateRepayments: () => queryClient.invalidateQueries({ queryKey: ['repayments'] }),
     invalidateCapital: () => queryClient.invalidateQueries({ queryKey: ['capital-balance'] }),
