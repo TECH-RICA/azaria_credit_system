@@ -112,17 +112,31 @@ def send_invite_email_async(email, token, role, invited_by_name="System Admin", 
             "subject": f"You've been invited as a {role} - {sender_name}",
             "htmlContent": html_content,
         }
-        requests.post(url, json=payload, headers=headers)
+        res = requests.post(url, json=payload, headers=headers)
         
         # Log the email for Official Communicator
         from ..models import EmailLog
+        
+        # Determine status
+        if res.status_code in [200, 201, 202]:
+            status = "SENT"
+            error_details = None
+        else:
+            status = "FAILED"
+            try:
+                error_details = res.json()
+            except:
+                error_details = res.text
+
         EmailLog.objects.create(
             sender=sender_user,
             recipient_email=email,
             recipient_name="Staff",
             subject=f"Invitation to join as {role}",
-            message=html_content, # Log the HTML so it reflects what was sent
-            status="SENT"
+            message=f"Invitation sent to {email} for role {role} by {invited_by_name}.", 
+            email_type="INVITATION",
+            status=status,
+            error_details=str(error_details) if error_details else None
         )
     except Exception as e:
         print(f"Error sending invite email: {e}")

@@ -19,73 +19,6 @@ from ..serializers import (
 from ..utils.security import log_action, get_client_ip
 from ..permissions import IsAdminUser, IsSuperAdmin
 
-def send_invitation_email_async(email, role, invited_by_name, token, branch=None):
-    try:
-        sender_name = os.getenv("SENDER_NAME", "Azariah Credit Ltd")
-        from_email = os.getenv("FROM_EMAIL")
-        brevo_api_key = os.getenv("BREVO_API_KEY")
-
-        if not brevo_api_key or not from_email:
-            print(
-                f"[ERROR] Email setup missing for Invitation: BREVO_API_KEY={bool(brevo_api_key)}, FROM_EMAIL={bool(from_email)}"
-            )
-            return
-
-        invite_url = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/signup?token={token}&email={email}&role={role}"
-        if branch:
-            invite_url += f"&branch={branch}"
-
-        url = "https://api.brevo.com/v3/smtp/email"
-        headers = {
-            "accept": "application/json",
-            "api-key": brevo_api_key,
-            "content-type": "application/json",
-        }
-
-        payload = {
-            "sender": {"name": sender_name, "email": from_email},
-            "to": [{"email": email}],
-            "subject": f"You've been invited as a {role} - {sender_name}",
-            "htmlContent": f"""
-                <html>
-                <body style="font-family: Arial, sans-serif;">
-                <h2>Administrative Invitation</h2>
-                <p>Hello,</p>
-                <p>You have been invited by {invited_by_name} to join <strong>{sender_name}</strong> as a <strong>{role}</strong>.</p>
-                <p>Please click the link below to complete your registration:</p>
-                <p><a href="{invite_url}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Accept Invitation</a></p>
-                <p>If the button doesn't work, copy and paste this URL into your browser:</p>
-                <p>{invite_url}</p>
-                <p>This invitation will expire in 30 minutes.</p>
-                <p>Best regards,<br/>{sender_name} Team</p>
-                </body>
-                </html>
-            """,
-        }
-        try:
-            res = requests.post(url, json=payload, headers=headers)
-            EmailLog.objects.create(
-                recipient_email=email,
-                recipient_name=None,
-                subject=payload["subject"],
-                message=f"Invitation sent to {email} for role {role} by {invited_by_name}. Branch: {branch or 'N/A'}.",
-                email_type="INVITATION",
-                status="SENT" if res.status_code in [200, 201, 202] else "FAILED",
-                error_details=res.text if res.status_code not in [200, 201, 202] else None
-            )
-        except Exception as api_err:
-            EmailLog.objects.create(
-                recipient_email=email,
-                recipient_name=None,
-                subject=payload["subject"],
-                message=f"Invitation sent to {email} for role {role} by {invited_by_name}. Branch: {branch or 'N/A'}.",
-                email_type="INVITATION",
-                status="FAILED",
-                error_details=str(api_err)
-            )
-    except Exception as e:
-        print(f"Error sending invite: {e}")
-
 class AdminListCreateView(generics.ListCreateAPIView):
     serializer_class = AdminSerializer
     permission_classes = [permissions.AllowAny]
@@ -382,8 +315,17 @@ class AdminInviteView(views.APIView):
                 "branch_fk": branch_fk, "expires_at": timezone.now() + timedelta(minutes=30), "is_used": False
             })
 
-            from ..utils.sms import send_invite_email_async
-            threading.Thread(target=send_invite_email_async, args=(email_addr, token, role, inviter.full_name, inviter)).start()
-            sent_emails.append(email_addr)
+            from ..utils.sms import send_invite_email_sync
+            success, err = send_invite_email_sync(email_addr, token, role, inviter.full_name, inviter)
+            
+            if success:
+                sent_emails.append(email_addr)
+            else:
+                errors.append(f"Failed to send email to {email_addr}: {err}")
         
-        return Response({"message": f"Sent {len(sent_emails)} invitations.", "sent": sent_emails, "errors": errors})
+        status_code = 200 if sent_emails else 400
+        return Response({
+            "message": f"Sent {len(sent_emails)} invitations." if sent_emails else "Failed to send invitations.", 
+            "sent": sent_emails, 
+            "errors": errors
+        }, status=status_code)
