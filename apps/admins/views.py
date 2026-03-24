@@ -68,7 +68,8 @@ def send_invitation_email_async(email, role, invited_by_name, token, branch=None
                 recipient_email=email,
                 recipient_name=None,
                 subject=payload["subject"],
-                message=payload["htmlContent"],
+                message=f"Invitation sent to {email} for role {role} by {invited_by_name}. Branch: {branch or 'N/A'}.",
+                email_type="INVITATION",
                 status="SENT" if res.status_code in [200, 201, 202] else "FAILED",
                 error_details=res.text if res.status_code not in [200, 201, 202] else None
             )
@@ -77,7 +78,8 @@ def send_invitation_email_async(email, role, invited_by_name, token, branch=None
                 recipient_email=email,
                 recipient_name=None,
                 subject=payload["subject"],
-                message=payload["htmlContent"],
+                message=f"Invitation sent to {email} for role {role} by {invited_by_name}. Branch: {branch or 'N/A'}.",
+                email_type="INVITATION",
                 status="FAILED",
                 error_details=str(api_err)
             )
